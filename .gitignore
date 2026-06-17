@@ -1,0 +1,54 @@
+# ===========================================================================
+# Code repo only. Data, models, venv, and outputs are regenerated locally —
+# see README.md "Setup". Placeholder dirs are kept via .gitkeep.
+# ===========================================================================
+
+# --- Python / env ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.cache/
+
+# --- Virtual env / nvcc shim inside the model repo ---
+OpenDriveVLA/.cache/
+
+# --- Large data (regenerate via the pipeline; see README) ---
+data_carla/raw/*
+!data_carla/raw/.gitkeep
+data_carla/processed/*
+!data_carla/processed/.gitkeep
+data_carla/plan_cache/
+data_carla/v1.0-mini/
+
+data/nuscenes/maps/
+data/nuscenes/basemap/
+data/nuscenes/expansion/
+data/nuscenes/prediction/
+data/nuscenes/v1.0-carla/
+data/nuscenes/*.pkl
+data/nuscenes/LICENSE
+
+# --- Models: base + merged are big / re-obtainable. Keep only the LoRA adapter. ---
+checkpoints/OpenDriveVLA-0.5B/
+checkpoints/OpenDriveVLA-0.5B-carla/merged/
+checkpoints/OpenDriveVLA-0.5B-carla/epoch_001/
+checkpoints/OpenDriveVLA-0.5B-carla/epoch_002/
+# (checkpoints/OpenDriveVLA-0.5B-carla/epoch_003/ — the trained LoRA adapter — IS tracked)
+
+# --- Runtime outputs ---
+outputs/*
+!outputs/.gitkeep
+OpenDriveVLA/output/
+
+# --- Upstream OpenDriveVLA eval assets (big, re-downloadable, unused by CARLA pipeline) ---
+OpenDriveVLA/drivevla/eval_share/gt/
+
+# --- Misc ---
+*.log
+.DS_Store
+
+# --- Generic coding-guideline docs (not useful to others) ---
+CLAUDE.md
+EXAMPLES.md

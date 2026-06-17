@@ -1,0 +1,35 @@
+{
+  "additional_special_tokens": [
+    "<trajectory>",
+    "<track_start>",
+    "<track_end>",
+    "<traj_start>",
+    "<traj_end>",
+    "<scene_start>",
+    "<scene_end>",
+    "<map_start>",
+    "<map_end>",
+    "<ego_start>",
+    "<ego_end>",
+    "<command_start>",
+    "<command_end>",
+    "<question_start>",
+    "<question_end>",
+    "<answer_start>",
+    "<answer_end>"
+  ],
+  "eos_token": {
+    "content": "<|im_end|>",
+    "lstrip": false,
+    "normalized": false,
+    "rstrip": false,
+    "single_word": false
+  },
+  "pad_token": {
+    "content": "<|endoftext|>",
+    "lstrip": false,
+    "normalized": false,
+    "rstrip": false,
+    "single_word": false
+  }
+}
