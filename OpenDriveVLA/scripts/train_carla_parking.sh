@@ -14,6 +14,8 @@ set -e
 
 CKPT_PATH=${1:-"../checkpoints/OpenDriveVLA-0.5B"}
 NUM_EPOCHS=${2:-10}
+# Optional 3rd arg: output dir (use a distinct one to avoid overwriting a prior run).
+OUTPUT_DIR=${3:-"../checkpoints/OpenDriveVLA-0.5B-carla"}
 
 export PYTHONPATH="$(pwd)/third_party/mmdetection3d_1_0_0rc6:${PYTHONPATH}"
 export CACHED_DATA_PATH="../data_carla/processed/cached_parking_info.pkl"
@@ -44,7 +46,7 @@ python drivevla/train_drivevla.py \
   --model-path "${CKPT_PATH}" \
   --uniad-config projects/configs/stage1_track_map/carla_parking.py \
   --conversations ../data_carla/processed/carla_conversations.json \
-  --output-dir ../checkpoints/OpenDriveVLA-0.5B-carla \
+  --output-dir "${OUTPUT_DIR}" \
   --num-epochs "${NUM_EPOCHS}" \
   --lr 2e-4 \
   --lora-rank 64 \

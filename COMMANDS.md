@@ -151,6 +151,38 @@ sources is fine — changes only take effect on the next run.
 
 ---
 
+## Mission-goal (command) scheme
+
+The "mission goal" the model sees is **generated in code**, not stored in any doc. The
+**current scheme is maneuver-level** (a per-episode goal, not a per-frame primitive):
+
+```
+Mission goal: reverse-perpendicular park, right side, into slot at (1.19,-4.53,0.62)
+```
+
+- `maneuver_type` + `side` come from the episode (carried in the pkl as `maneuver_type`,
+  `side`, `target_slot`), constant across the episode.
+- The triple `(right, forward, dheading)` is `slot_local` — the target slot in the
+  **current** ego frame (x=right, y=forward), recomputed per frame by `slot_to_local`
+  in `scripts/generate_cached_nuscenes_info.py`. `build_llava_conversation` renders it.
+- **Legacy fallback:** frames with no `maneuver_type` fall back to the old per-frame
+  `[right, left, forward, reverse]` vocabulary (`infer_future_command`).
+
+**Why this scheme:** the old per-frame vocabulary couldn't tell a low-speed parking
+*approach* from highway *cruising* — both became "keep forward" — so the model fell back
+on its cruise prior (wide, slow turns). Telling it explicitly that it is *parking* into a
+specific slot fixed that "forward problem." Measured on the training set, @3s L2 dropped
+from **forward 0.62 / reverse 0.31 m** (per-frame) to **forward 0.48 / reverse 0.15 m**
+(maneuver+slot).
+
+**Inference-time contract (closed-loop harness):** any live runner MUST rebuild this exact
+string — `maneuver_type`+`side` from the scenario, `slot_local` recomputed every step via
+the same `slot_to_local` transform. Feeding the old "keep forward"/"reverse" prompt is
+out-of-distribution and degrades the model. Source of truth: `slot_to_local` +
+`build_llava_conversation.generate_user_message`.
+
+---
+
 ## Data-collection rate
 
 Current CARLA data is **2 Hz** (every 15th frame at 30 Hz sim) → 0.5 s/frame,

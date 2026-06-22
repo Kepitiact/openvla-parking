@@ -19,7 +19,16 @@ def load_info_tokens(path):
     # Also extract per-token reverse flag if present (CARLA data).
     reverse_flags = {x["token"]: bool(x.get("reverse", False))
                      for x in infos if "token" in x}
-    return tokens, reverse_flags
+    # Per-token maneuver labels (maneuver-level command). Optional — older data lacks them.
+    maneuver_info = {
+        x["token"]: {
+            "maneuver_type": x.get("maneuver_type"),
+            "side": x.get("side"),
+            "target_slot": x.get("target_slot"),
+        }
+        for x in infos if "token" in x
+    }
+    return tokens, reverse_flags, maneuver_info
 
 
 def get_sample_pose(nusc, sample_token):
@@ -36,6 +45,24 @@ def global_to_local_xy(global_xy, origin_xyz, origin_rot):
     local_xyz = origin_rot.rotation_matrix.T @ (point_xyz - origin_xyz)
     # Ego frame: x=forward, y=left. GPT-Driver cache convention: x=right, y=forward.
     return np.array([-local_xyz[1], local_xyz[0]], dtype=np.float64)
+
+
+def _normalize_angle(a):
+    return (a + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def slot_to_local(target_slot, cur_xyz, cur_rot):
+    """Global target-slot pose -> ego-local [right, forward, dheading], matching the
+    trajectory convention (x=right, y=forward). Returns None if no slot is available."""
+    if not target_slot or "pose" not in target_slot:
+        return None
+    pose = target_slot["pose"]
+    sx, sy = float(pose["translation"][0]), float(pose["translation"][1])
+    right, forward = global_to_local_xy([sx, sy], cur_xyz, cur_rot)
+    slot_yaw = Quaternion(pose["rotation"]).yaw_pitch_roll[0]
+    ego_yaw = cur_rot.yaw_pitch_roll[0]
+    dheading = _normalize_angle(slot_yaw - ego_yaw)
+    return np.array([right, forward, dheading], dtype=np.float32)
 
 
 def collect_history_local(nusc, sample_token, cur_xyz, cur_rot, history_steps=4):
@@ -92,7 +119,7 @@ def infer_future_command(fut_traj, is_reverse=False):
     return np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float32)  # forward
 
 
-def build_entry(nusc, sample_token, is_reverse=False):
+def build_entry(nusc, sample_token, is_reverse=False, maneuver=None):
     _, cur_xyz, cur_rot = get_sample_pose(nusc, sample_token)
 
     gt_ego_his_trajs = collect_history_local(nusc, sample_token, cur_xyz, cur_rot)
@@ -134,13 +161,21 @@ def build_entry(nusc, sample_token, is_reverse=False):
         dtype=np.float32,
     )
 
-    return {
+    entry = {
         "gt_ego_lcf_feat": gt_ego_lcf_feat,
         "gt_ego_his_trajs": gt_ego_his_trajs,
         "gt_ego_his_diff": gt_ego_his_diff,
         "gt_ego_fut_cmd": infer_future_command(gt_ego_fut_trajs, is_reverse=is_reverse),
         "gt_ego_fut_trajs": gt_ego_fut_trajs,
     }
+    # Maneuver-level command (preferred over the per-frame cmd by build_llava_conversation).
+    if maneuver:
+        entry["maneuver_type"] = maneuver.get("maneuver_type")
+        entry["side"] = maneuver.get("side")
+        slot_local = slot_to_local(maneuver.get("target_slot"), cur_xyz, cur_rot)
+        if slot_local is not None:
+            entry["slot_local"] = slot_local
+    return entry
 
 
 def main():
@@ -151,12 +186,16 @@ def main():
     parser.add_argument("--output", default=str(paths.CACHED_INFO))
     args = parser.parse_args()
 
-    tokens, reverse_flags = load_info_tokens(args.infos)
+    tokens, reverse_flags, maneuver_info = load_info_tokens(args.infos)
     nusc = NuScenes(version=args.version, dataroot=args.dataroot, verbose=False)
 
     cached = {}
     for i, token in enumerate(tokens, start=1):
-        cached[token] = build_entry(nusc, token, is_reverse=reverse_flags.get(token, False))
+        cached[token] = build_entry(
+            nusc, token,
+            is_reverse=reverse_flags.get(token, False),
+            maneuver=maneuver_info.get(token),
+        )
         if i % 50 == 0 or i == len(tokens):
             print(f"Processed {i}/{len(tokens)}")
 

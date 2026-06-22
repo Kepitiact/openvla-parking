@@ -116,19 +116,29 @@ def generate_user_message(data_dict):
     Mission goal:
         gt_ego_fut_cmd
     """
-    # cmd_message = ""
-    cmd_vec = data_dict['gt_ego_fut_cmd']
-    right, left, forward = cmd_vec[0], cmd_vec[1], cmd_vec[2]
-    reverse = cmd_vec[3] if len(cmd_vec) > 3 else 0.0
-    if reverse > 0:
-        mission_goal = "reverse"
-    elif right > 0:
-        mission_goal = "turn right"
-    elif left > 0:
-        mission_goal = "turn left"
+    # Prefer the maneuver-level command (maneuver type + side + ego-local target slot)
+    # when present; otherwise fall back to the per-frame right/left/forward/reverse command.
+    maneuver_type = data_dict.get('maneuver_type')
+    if maneuver_type:
+        mission_goal = maneuver_type.replace('_', '-') + " park"
+        side = data_dict.get('side')
+        if side:
+            mission_goal += f", {side} side"
+        slot = data_dict.get('slot_local')
+        if slot is not None:
+            mission_goal += f", into slot at ({slot[0]:.2f},{slot[1]:.2f},{slot[2]:.2f})"
     else:
-        mission_goal = "keep forward"
-    # cmd_message += f"Mission Goal: "
+        cmd_vec = data_dict['gt_ego_fut_cmd']
+        right, left, forward = cmd_vec[0], cmd_vec[1], cmd_vec[2]
+        reverse = cmd_vec[3] if len(cmd_vec) > 3 else 0.0
+        if reverse > 0:
+            mission_goal = "reverse"
+        elif right > 0:
+            mission_goal = "turn right"
+        elif left > 0:
+            mission_goal = "turn left"
+        else:
+            mission_goal = "keep forward"
     cmd_message = f"{mission_goal}"
     
     """

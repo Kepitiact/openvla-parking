@@ -121,9 +121,6 @@ def main():
             vals = err_dict[sec]
             row += f"  {np.mean(vals):6.2f}m" if vals else f"  {'N/A':>6}"
         print(row)
-
-    print("\nL2 displacement error (lower = better). Baseline: pretrained model prediction quality.")
-
-
+        
 if __name__ == "__main__":
     main()
