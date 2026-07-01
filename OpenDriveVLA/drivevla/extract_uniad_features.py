@@ -20,19 +20,7 @@ import os
 import pathlib
 import sys
 
-# Bootstrap paths so this runs standalone (llava/projects live at the repo root,
-# mmdet3d in third_party) and DeepSpeed's nvcc check passes (reuse the shared shim).
-_ODV = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ODV / "third_party" / "mmdetection3d_1_0_0rc6"))
-sys.path.insert(0, str(_ODV))
-_SHIM = _ODV / ".cache" / "fake_cuda"
-if not (_SHIM / "bin" / "nvcc").exists():
-    (_SHIM / "bin").mkdir(parents=True, exist_ok=True)
-    (_SHIM / "bin" / "nvcc").write_text(
-        '#!/usr/bin/env bash\necho "Cuda compilation tools, release 12.1, V12.1.0"\n')
-    os.chmod(_SHIM / "bin" / "nvcc", 0o755)
-os.environ.setdefault("CUDA_HOME", str(_SHIM))
-os.environ["PATH"] = f"{_SHIM / 'bin'}:{os.environ.get('PATH', '')}"
+import _bootstrap  # noqa: F401  (sys.path + conditional nvcc shim; must precede llava/mmdet3d)
 
 import torch
 import torch.distributed as dist
@@ -54,6 +42,9 @@ def parse_args():
     ap.add_argument("--model-path", default="../checkpoints/OpenDriveVLA-0.5B")
     ap.add_argument("--uniad-config", default="projects/configs/stage1_track_map/carla_parking.py")
     ap.add_argument("--conversations", default="../data_carla/processed/carla_conversations.json")
+    ap.add_argument("--ann-file", default=None,
+                    help="Override the UniAD config's data.test.ann_file (the infos pkl). "
+                         "Use to extract only a subset, e.g. dagger_infos.pkl.")
     ap.add_argument("--out-dir", default="../data_carla/processed/uniad_features")
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--num-workers", type=int, default=4)
@@ -85,9 +76,12 @@ def main():
 
     # Dataset (test mode, no uniad_pth — we're generating them)
     uniad_cfg = Config.fromfile(args.uniad_config)
+    if args.ann_file:
+        uniad_cfg.data.test.ann_file = args.ann_file
     data_args = DataArguments(
         data_path=args.conversations,
         lazy_preprocess=True,
+        # nuScenes multi-frame cap; unused for single-frame CARLA parking (D4).
         frames_upbound=32,
     )
     dataset = LLaVANuScenesDataset(
@@ -152,12 +146,31 @@ def main():
 
                 results_cpu = _to_cpu(results_for_vlm)
                 # Keep only the fields training reads (see
-                # llava_arch.encode_vision_tower_result). The full result carries
-                # bev_embed (~41MB) plus detection/tracking outputs that the LLM
-                # never consumes — saving them all needs ~46MB/frame (~2.3TB for
-                # the dataset). The slim dict is ~1.2MB/frame (~58GB total).
+                # llava_arch.encode_vision_tower_result), plus the decoded
+                # detections needed to build reasoning data. We still drop the
+                # big bev_embed (~41MB/frame). track_query_embeddings + img_feat
+                # are ~1.2MB/frame; the decoded boxes add only a few KB.
                 rt = results_cpu.get("result_track", {})
                 rs = results_cpu.get("result_seg", {})
+
+                # Decoded objects UniAD perceives this frame, as plain CPU tensors
+                # (so loading doesn't require mmdet3d box classes). track_bbox_results
+                # is [(boxes_3d, scores, labels, bbox_index, mask)]; boxes_3d.tensor
+                # is [N, 9] = ego-frame (x,y,z,w,l,h,yaw,vx,vy). None when no detections.
+                det = None
+                try:
+                    tbr = rt.get("track_bbox_results")
+                    if tbr:
+                        boxes_3d, scores, labels = tbr[0][0], tbr[0][1], tbr[0][2]
+                        box_t = boxes_3d.tensor if hasattr(boxes_3d, "tensor") else boxes_3d
+                        det = {
+                            "boxes": box_t.detach().cpu(),
+                            "scores": scores.detach().cpu(),
+                            "labels": labels.detach().cpu(),
+                        }
+                except Exception as e:
+                    print(f"  warn: could not extract detections for {token}: {e}")
+
                 slim = {
                     "scene_token": results_cpu.get("scene_token"),
                     "sample_token": results_cpu.get("sample_token"),
@@ -165,6 +178,7 @@ def main():
                         "track_query_embeddings": rt.get("track_query_embeddings"),
                         "img_feat_2D": rt.get("img_feat_2D"),
                         "track_gt_inds_to_embed_idx": rt.get("track_gt_inds_to_embed_idx"),
+                        "detections": det,
                     },
                     "result_seg": {
                         "chosen_output_query_things": rs.get("chosen_output_query_things"),

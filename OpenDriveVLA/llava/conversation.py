@@ -514,6 +514,21 @@ Output Format:
     sep="<|im_end|>",
 )
 
+# QA-only variant: same model/tokens as the planning template, but the system
+# prompt asks for a natural-language answer and never mentions trajectory. Used
+# to probe whether the model retains question-answering ability without the
+# "trajectory is MOST IMPORTANT" bias of the planning prompt.
+conv_qwen_qa = Conversation(
+    system = """<|im_start|>system
+You are Open-DriveVLA, an advanced vision-language driving model. Answer the user's question about the current driving scene using the provided scene, tracking, and map information. Respond with a clear, concise natural-language answer only. Do not output coordinates or a trajectory.""",
+    roles=("<|im_start|>user", "<|im_start|>assistant"),
+    version="qwen",
+    messages=[],
+    offset=0,
+    sep_style=SeparatorStyle.CHATML,
+    sep="<|im_end|>",
+)
+
 conv_gemma_instruct = Conversation(system="", roles=("<start_of_turn>user\n", "<start_of_turn>model\n"), version="gemma", messages=[], offset=0, sep_style=SeparatorStyle.GEMMA, sep="<end_of_turn>\n")
 
 conv_llava_plain = Conversation(
@@ -643,6 +658,7 @@ conv_templates = {
     "qwen_2": conv_qwen,
     "gemma_instruct": conv_gemma_instruct,
     "qwen_planning_oriented_vlm": conv_qwen_planning_oriented_vlm,
+    "qwen_qa": conv_qwen_qa,
 }
 
 

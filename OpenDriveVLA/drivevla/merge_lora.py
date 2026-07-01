@@ -9,24 +9,12 @@ Usage (from OpenDriveVLA/ directory):
 """
 
 import argparse
+import json
 import os
 import pathlib
 import sys
 
-# Bootstrap paths so `python drivevla/merge_lora.py` works without a shell wrapper:
-# llava + projects live at the OpenDriveVLA root, mmdet3d in third_party, and
-# DeepSpeed checks for nvcc on import (reuse the shim the other scripts create).
-_ODV = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ODV / "third_party" / "mmdetection3d_1_0_0rc6"))
-sys.path.insert(0, str(_ODV))
-_SHIM = _ODV / ".cache" / "fake_cuda"
-if not (_SHIM / "bin" / "nvcc").exists():
-    (_SHIM / "bin").mkdir(parents=True, exist_ok=True)
-    (_SHIM / "bin" / "nvcc").write_text(
-        '#!/usr/bin/env bash\necho "Cuda compilation tools, release 12.1, V12.1.0"\n')
-    os.chmod(_SHIM / "bin" / "nvcc", 0o755)
-os.environ.setdefault("CUDA_HOME", str(_SHIM))
-os.environ["PATH"] = f"{_SHIM / 'bin'}:{os.environ.get('PATH', '')}"
+import _bootstrap  # noqa: F401  (sys.path + conditional nvcc shim; must precede llava/mmdet3d)
 
 import torch
 from peft import PeftModel
@@ -44,6 +32,28 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # Guard against merging a LoRA adapter onto the wrong base checkpoint: the
+    # adapter records the base it was trained on. Mismatched bases merge silently
+    # but produce garbage weights, so fail clearly here.
+    adapter_cfg_path = os.path.join(args.lora, "adapter_config.json")
+    if os.path.exists(adapter_cfg_path):
+        with open(adapter_cfg_path) as f:
+            trained_base = json.load(f).get("base_model_name_or_path")
+        if trained_base:
+            same = (os.path.basename(os.path.normpath(trained_base))
+                    == os.path.basename(os.path.normpath(args.base)))
+            try:
+                same = same or os.path.samefile(trained_base, args.base)
+            except OSError:
+                pass
+            if not same:
+                raise SystemExit(
+                    f"--base mismatch: adapter was trained on "
+                    f"'{trained_base}' but --base is '{args.base}'.\n"
+                    "Pass the same base checkpoint used for training, "
+                    "or fix the adapter's base_model_name_or_path."
+                )
 
     print("Loading base model...")
     disable_torch_init()

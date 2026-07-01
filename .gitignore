@@ -30,12 +30,38 @@ data/nuscenes/v1.0-carla/
 data/nuscenes/*.pkl
 data/nuscenes/LICENSE
 
-# --- Models: base + merged are big / re-obtainable. Keep only the LoRA adapter. ---
+# nuScenes mini used for the UniAD domain-gap sanity test (data, kept locally)
+nuscenes_sample_test/
+
+# Reference paper PDF (large binary, not code)
+opendrivevlapaper.pdf
+
+# --- Models: base, merged models, full weights and resumable training state are
+#     big / re-obtainable. Track ONLY the small LoRA adapter files
+#     (adapter_config.json + adapter_model.*) for any run — e.g.
+#     OpenDriveVLA-0.5B-carla/, OpenDriveVLA-0.5B-carla-dagger1/, ... ---
 checkpoints/OpenDriveVLA-0.5B/
-checkpoints/OpenDriveVLA-0.5B-carla/merged/
+checkpoints/_smoke/
+checkpoints/**/merged*/
+checkpoints/**/last_state/
+checkpoints/**/train_state.pt
+# Full (non-adapter) model weights anywhere under checkpoints (adapter_model.* kept).
+checkpoints/**/model*.safetensors
+checkpoints/**/pytorch_model*.bin
+# Tokenizer/vocab re-saved in every checkpoint dir — re-obtainable from the base;
+# don't track (keeps repo to just adapter_config.json + adapter_model.* + README).
+checkpoints/**/tokenizer.json
+checkpoints/**/tokenizer_config.json
+checkpoints/**/vocab.json
+checkpoints/**/merges.txt
+checkpoints/**/special_tokens_map.json
+checkpoints/**/added_tokens.json
+checkpoints/**/generation_config.json
+# Track only the LATEST adapter per run; ignore intermediate-epoch checkpoints
+# (kept: OpenDriveVLA-0.5B-carla/epoch_003, OpenDriveVLA-0.5B-carla-dagger1/epoch_002).
 checkpoints/OpenDriveVLA-0.5B-carla/epoch_001/
 checkpoints/OpenDriveVLA-0.5B-carla/epoch_002/
-# (checkpoints/OpenDriveVLA-0.5B-carla/epoch_003/ — the trained LoRA adapter — IS tracked)
+checkpoints/OpenDriveVLA-0.5B-carla-dagger1/epoch_001/
 
 # --- Runtime outputs ---
 outputs/*

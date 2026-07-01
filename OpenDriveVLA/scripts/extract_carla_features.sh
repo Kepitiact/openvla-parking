@@ -6,30 +6,29 @@
 set -e
 
 CKPT_PATH=${1:-"../checkpoints/OpenDriveVLA-0.5B"}
+NUM_WORKERS=${NUM_WORKERS:-0}
 
+REPO_ROOT="$(cd .. && pwd)"
+export CARLA_DATA_ROOT="${CARLA_DATA_ROOT:-${REPO_ROOT}/data_carla}"
+export NUSC_DATA_ROOT="${NUSC_DATA_ROOT:-${REPO_ROOT}/data/nuscenes}"
+export CACHED_DATA_PATH="${CACHED_DATA_PATH:-${CARLA_DATA_ROOT}/processed/cached_parking_info.pkl}"
 export PYTHONPATH="$(pwd)/third_party/mmdetection3d_1_0_0rc6:${PYTHONPATH}"
-export CACHED_DATA_PATH="../data_carla/processed/cached_parking_info.pkl"
 
-# DeepSpeed checks for nvcc even when we don't use it for training.
-# Create a shim if nvcc is not on PATH.
-if ! command -v nvcc >/dev/null 2>&1 && [[ -z "${CUDA_HOME}" || ! -x "${CUDA_HOME}/bin/nvcc" ]]; then
-    CUDA_VER=$(python -c "import torch; v=torch.version.cuda or '12.1'; print('.'.join(v.split('.')[:2]))")
-    SHIM="$(pwd)/.cache/fake_cuda"
-    mkdir -p "${SHIM}/bin"
-    cat > "${SHIM}/bin/nvcc" <<EOF
-#!/usr/bin/env bash
-echo "nvcc: NVIDIA (R) Cuda compiler driver"
-echo "Cuda compilation tools, release ${CUDA_VER}, V${CUDA_VER}.0"
-EOF
-    chmod +x "${SHIM}/bin/nvcc"
-    export CUDA_HOME="${SHIM}"
-    export PATH="${SHIM}/bin:${PATH}"
-    echo ">>> nvcc shim created at ${SHIM}"
-fi
+# NOTE: the nvcc shim is handled inside drivevla/_bootstrap.py, conditional on a
+# real nvcc being absent (so HAL's real CUDA toolkit is used as-is).
 
-python drivevla/extract_uniad_features.py \
-  --model-path "${CKPT_PATH}" \
-  --uniad-config projects/configs/stage1_track_map/carla_parking.py \
-  --conversations ../data_carla/processed/carla_conversations.json \
-  --out-dir ../data_carla/processed/uniad_features \
-  --num-workers 0
+# Optional overrides for per-round DAgger extraction:
+#   CONV      conversations json to stamp uniad_pth into (default: base)
+#   ANN_FILE  infos pkl to iterate (default: the config's; use a dagger-only pkl
+#             to extract just one round's tokens)
+CONV=${CONV:-"${CARLA_DATA_ROOT}/processed/carla_conversations.json"}
+EXTRACT_ARGS=(
+  --model-path "${CKPT_PATH}"
+  --uniad-config projects/configs/stage1_track_map/carla_parking.py
+  --conversations "${CONV}"
+  --out-dir "${CARLA_DATA_ROOT}/processed/uniad_features"
+  --num-workers "${NUM_WORKERS}"
+)
+[[ -n "${ANN_FILE:-}" ]] && EXTRACT_ARGS+=(--ann-file "${ANN_FILE}") || true
+
+python drivevla/extract_uniad_features.py "${EXTRACT_ARGS[@]}"

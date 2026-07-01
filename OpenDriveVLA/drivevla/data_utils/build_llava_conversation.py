@@ -143,22 +143,20 @@ def generate_user_message(data_dict):
     
     """
     Planning trajectory:
-        gt_ego_fut_trajs: [6, 2] last 6 seconds
+        gt_ego_fut_trajs: [7, 3] -> 6 future waypoints (skip index 0 = current frame).
+        Each waypoint is (x=right, y=forward, h=heading), where h is the future
+        frame's yaw RELATIVE to the current frame (radians, in [-pi, pi]), same
+        convention as the mission-goal slot's third component. The heading is an
+        emitted output label so the model can express rotation on reverse arcs
+        where the positions alone are nearly collinear.
     """
-    x1 = data_dict['gt_ego_fut_trajs'][1][0]
-    x2 = data_dict['gt_ego_fut_trajs'][2][0]
-    x3 = data_dict['gt_ego_fut_trajs'][3][0]
-    x4 = data_dict['gt_ego_fut_trajs'][4][0]
-    x5 = data_dict['gt_ego_fut_trajs'][5][0]
-    x6 = data_dict['gt_ego_fut_trajs'][6][0]
-    y1 = data_dict['gt_ego_fut_trajs'][1][1]
-    y2 = data_dict['gt_ego_fut_trajs'][2][1]
-    y3 = data_dict['gt_ego_fut_trajs'][3][1]
-    y4 = data_dict['gt_ego_fut_trajs'][4][1]
-    y5 = data_dict['gt_ego_fut_trajs'][5][1]
-    y6 = data_dict['gt_ego_fut_trajs'][6][1]
-    
-    traj_message = f"[({x1:.2f},{y1:.2f}),({x2:.2f},{y2:.2f}),({x3:.2f},{y3:.2f}),({x4:.2f},{y4:.2f}),({x5:.2f},{y5:.2f}),({x6:.2f},{y6:.2f})]"
+    pts = [
+        (data_dict['gt_ego_fut_trajs'][k][0],
+         data_dict['gt_ego_fut_trajs'][k][1],
+         data_dict['gt_ego_fut_trajs'][k][2])
+        for k in range(1, 7)
+    ]
+    traj_message = "[" + ",".join(f"({x:.2f},{y:.2f},{h:.2f})" for x, y, h in pts) + "]"
 
     return ego_message, his_message, cmd_message, traj_message
 
@@ -172,6 +170,30 @@ def build_llava_conversation(data_sample, cached_nuscenes_data):
     sample_token = data_sample.get('sample_id') or raw_id.split('_')[0]
     value = cached_nuscenes_data.get(sample_token)
 
+    # QA / interpretability probe (test-time): when a sample carries a free-form
+    # `question`, build a question-answering prompt instead of the trajectory
+    # prompt. Trajectory samples have no `question` key, so the path below is
+    # unchanged.
+    question = data_sample.get('question')
+    if question:
+        prompt = (
+            f"Scene information: {DEFAULT_SCENE_START_TOKEN}{DEFAULT_SCENE_TOKEN}{DEFAULT_SCENE_END_TOKEN}\n"
+            f"Object-wise tracking information: {DEFAULT_TRACK_START_TOKEN}{DEFAULT_TRACK_TOKEN}{DEFAULT_TRACK_END_TOKEN}\n"
+            f"Map information: {DEFAULT_MAP_START_TOKEN}{DEFAULT_MAP_TOKEN}{DEFAULT_MAP_END_TOKEN}\n"
+        )
+        if value is not None:
+            ego_message, his_message, _, _ = generate_user_message(value)
+            prompt += (
+                f"Ego states: {ego_message}\n"
+                f"Historical trajectory (last 2 seconds): {his_message}\n"
+            )
+        data_sample['conversations'][0]['value'] = (
+            prompt + f"Please answer the following question: {question}"
+        )
+        if len(data_sample.get('conversations', [])) > 1:
+            data_sample['conversations'][1]['value'] = ""
+        return data_sample
+
     if value is None:
         data_sample['conversations'][0]['value'] = (
             f"Scene information: {DEFAULT_SCENE_START_TOKEN}{DEFAULT_SCENE_TOKEN}{DEFAULT_SCENE_END_TOKEN}\n"
@@ -184,7 +206,7 @@ def build_llava_conversation(data_sample, cached_nuscenes_data):
         )
         if len(data_sample.get('conversations', [])) > 1:
             data_sample['conversations'][1]['value'] = (
-                f"{DEFAULT_TRAJ_START_TOKEN}[(0.00,0.00),(0.00,0.00),(0.00,0.00),(0.00,0.00),(0.00,0.00),(0.00,0.00)]{DEFAULT_TRAJ_END_TOKEN}"
+                f"{DEFAULT_TRAJ_START_TOKEN}[(0.00,0.00,0.00),(0.00,0.00,0.00),(0.00,0.00,0.00),(0.00,0.00,0.00),(0.00,0.00,0.00),(0.00,0.00,0.00)]{DEFAULT_TRAJ_END_TOKEN}"
             )
         return data_sample
 

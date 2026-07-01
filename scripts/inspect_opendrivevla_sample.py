@@ -130,7 +130,12 @@ def load_prediction_map(predictions_path: Path | None) -> dict[str, dict]:
 
 
 def parse_trajectory_text(text: str) -> list[tuple[float, float]]:
-    pairs = re.findall(r"[\[(]([+-]?\d+(?:\.\d+)?),\s*([+-]?\d+(?:\.\d+)?)[\])]", text)
+    # Waypoints are (x, y, heading) 3-tuples; the optional heading keeps this
+    # backward-compatible with older 2-tuple prediction files. Plots use x, y only.
+    pairs = re.findall(
+        r"\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)(?:\s*,\s*[+-]?\d+(?:\.\d+)?)?\s*\)",
+        text,
+    )
     return [(float(x), float(y)) for x, y in pairs]
 
 

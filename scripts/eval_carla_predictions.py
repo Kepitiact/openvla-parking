@@ -38,7 +38,12 @@ def global_to_local(future_xy, origin_xy, yaw):
 
 
 def parse_trajectory(text):
-    pairs = re.findall(r"[\[(]([+-]?\d+(?:\.\d+)?),\s*([+-]?\d+(?:\.\d+)?)[\])]", text)
+    # Waypoints are (x, y, heading) 3-tuples; an optional heading keeps this
+    # backward-compatible with older 2-tuple prediction files. L2 uses x, y only.
+    pairs = re.findall(
+        r"\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)(?:\s*,\s*[+-]?\d+(?:\.\d+)?)?\s*\)",
+        text,
+    )
     return [(float(x), float(y)) for x, y in pairs]
 
 

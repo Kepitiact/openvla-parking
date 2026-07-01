@@ -144,7 +144,14 @@ class NuScenesTraj(object):
             # set first sample's vel equal to second sample's
             last_sample = self.nusc.get('sample', last_sample_token)
             second_last_sample_token = last_sample['prev']
-            self.sdc_vel_info[last_sample_token] = self.sdc_vel_info[second_last_sample_token]                
+            # Single-frame scenes (e.g. DAgger recovery states) have first==last
+            # and prev='', so the loop above never populated a velocity. There is
+            # no consecutive pose to diff, so use zero. This SDC velocity only
+            # feeds UniAD's SDC bbox/planning GT labels, which the VLM never reads.
+            if second_last_sample_token in self.sdc_vel_info:
+                self.sdc_vel_info[last_sample_token] = self.sdc_vel_info[second_last_sample_token]
+            else:
+                self.sdc_vel_info[last_sample_token] = np.zeros(2)
 
     def generate_sdc_info(self, sdc_vel, as_lidar_instance3d_box=False):
         # sdc dim from https://forum.nuscenes.org/t/dimensions-of-the-ego-vehicle-used-to-gather-data/550

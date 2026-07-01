@@ -178,7 +178,7 @@ class LLaVANuScenesDataset(NuScenesE2EDataset):
                 sample_token = self.data_infos[i]['token']
                 try:
                     self.list_data_dict.append(list_data_dict[sample_token_to_idx[sample_token]])
-                except:
+                except KeyError:
                     self.list_data_dict.append({"id": sample_token, "conversations": [{"role": "user", "value": "This sample does not have a conversation."}]})
                     print(f"!!! sample_token '{sample_token}' not found in <sample_token_to_idx>, meaning this sample is not in the conversation data. Please check the conversation data.")
         else:
@@ -286,8 +286,11 @@ class LLaVANuScenesDataset(NuScenesE2EDataset):
         id = data.get("id", data.get("qa_id", idx))
         question = data['conversations'][0]['value']
 
-        # Construct conversation context
-        conv = conv_templates["qwen_planning_oriented_vlm"].copy()
+        # Construct conversation context. QA-probe samples (carrying a free-form
+        # `question`) use a QA-only system prompt so the model isn't biased
+        # toward emitting a trajectory.
+        template = "qwen_qa" if data.get("question") else "qwen_planning_oriented_vlm"
+        conv = conv_templates[template].copy()
         conv.clear_conversation()
         conv.append_message(conv.roles[0], question)
         conv.append_message(conv.roles[1], None)
@@ -315,27 +318,17 @@ class LLaVANuScenesDataset(NuScenesE2EDataset):
     def _get_uniad_pth_data(self, idx):
         data = self.list_data_dict[idx]
 
-        # Load and process uniad_pth data
-        if os.path.exists(data['uniad_pth']):
-            uniad_pth = torch.load(data['uniad_pth'], map_location=self.device)
-        else:
-            if self.llava_train_mode:
-                os.makedirs('data/uniad_results_for_vlm/train/', exist_ok=True)
-                
-                print(f"\nFetching {data['sample_id']}.pth from remote server...")
-
-                os.system(f"rsync -a --partial --append-verify --info=progress2 --human-readable ge86wob2@login.ai.lrz.de:/dss/dssfs04/lwp-dss-0002/pn39vu/pn39vu-dss-0001/xuyuan/workspace/repos/drivevlms.worktrees/planning-oriented/llava-next/uniad/data/uniad_results_for_vlm/train/{data['sample_id']}.pth data/uniad_results_for_vlm/train/")
-                
-                uniad_pth = torch.load(data['uniad_pth'], map_location=self.device)
-                
-            elif self.llava_test_mode:
-                os.makedirs('data/uniad_results_for_vlm/val/', exist_ok=True)
-                
-                print(f"\nFetching {data['sample_id']}.pth from remote server...")
-
-                os.system(f"rsync -a --partial --append-verify --info=progress2 --human-readable ge86wob2@login.ai.lrz.de:/dss/dssfs04/lwp-dss-0002/pn39vu/pn39vu-dss-0001/xuyuan/workspace/repos/drivevlms.worktrees/planning-oriented/llava-next/uniad/data/uniad_results_for_vlm/val/{data['sample_id']}.pth data/uniad_results_for_vlm/val/")
-
-                uniad_pth = torch.load(data['uniad_pth'], map_location=self.device)
+        # Load pre-extracted UniAD features. They must already exist on disk;
+        # there is no remote fallback. If a feature file is missing, extraction
+        # was not run (or was run over a stale conversation set) — fail loudly.
+        pth_path = data['uniad_pth']
+        if not os.path.exists(pth_path):
+            raise FileNotFoundError(
+                f"UniAD feature file not found: {pth_path}\n"
+                f"(sample_id={data.get('sample_id')}). Re-run feature extraction:\n"
+                "  cd OpenDriveVLA && bash scripts/extract_carla_features.sh"
+            )
+        uniad_pth = torch.load(pth_path, map_location=self.device)
 
         uniad_pth_dict = {"uniad_pth": uniad_pth}
         return uniad_pth_dict
