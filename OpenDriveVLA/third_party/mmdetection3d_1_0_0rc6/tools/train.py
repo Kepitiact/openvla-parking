@@ -120,6 +120,13 @@ def main():
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
 
+    # Import the plugin package so its custom types (UniAD detector, heads,
+    # datasets, ...) register with mmdet/mmdet3d before the model/dataset build.
+    if cfg.get('plugin', False):
+        import importlib
+        plugin_dir = cfg.get('plugin_dir', 'projects/mmdet3d_plugin/')
+        importlib.import_module(os.path.dirname(plugin_dir).replace('/', '.'))
+
     # set multi-process settings
     setup_multi_processes(cfg)
 

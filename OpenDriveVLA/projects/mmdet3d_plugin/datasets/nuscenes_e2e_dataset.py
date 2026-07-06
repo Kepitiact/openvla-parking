@@ -80,6 +80,10 @@ class NuScenesE2EDataset(NuScenesDataset):
         self.len_debug = len_debug
         self.carla_lot_gt = carla_lot_gt
         super().__init__(*args, **kwargs)
+        # DistributedGroupSampler needs dataset.flag; all UniAD samples are the
+        # same size, so a single group (all zeros) is correct.
+        if not getattr(self, 'test_mode', False) and not hasattr(self, 'flag'):
+            self.flag = np.zeros(len(self.data_infos), dtype=np.uint8)
         self.queue_length = queue_length
         self.overlap_test = overlap_test
         self.bev_size = bev_size
