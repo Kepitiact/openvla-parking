@@ -24,8 +24,9 @@ import paths
 _ROOT = paths.PROJECT_ROOT
 
 # ---------------------------------------------------------------------------
-# Real nuScenes calibrations used as proxy for CARLA sensors.
-# All tokens are stable across v1.0-mini samples.
+# Stable sensor / calibrated_sensor TOKENS (borrowed from nuScenes v1.0-mini).
+# Only the tokens are used; the extrinsics + intrinsics are overridden at build
+# time with the ACTUAL CARLA rig read from the infos (see build_tables).
 # ---------------------------------------------------------------------------
 NUSC_SENSORS = {
     "LIDAR_TOP": {
@@ -96,11 +97,143 @@ CARLA_CAM_INTRINSIC = [[_f, 0.0, 800.0], [0.0, _f, 450.0], [0.0, 0.0, 1.0]]
 
 MAP_LOCATION = "boston-seaport"  # valid nuScenes map location for map lookups
 
+# nuScenes-10 detection classes (must match UniAD stage1 class_names) + their
+# category tokens (stable, arbitrary-but-consistent md5-ish hex strings).
+NUSC_CLASSES = [
+    "car", "truck", "construction_vehicle", "bus", "trailer", "barrier",
+    "motorcycle", "bicycle", "pedestrian", "traffic_cone",
+]
+
+
+def _category_token(name):
+    import hashlib
+    return "cat_" + hashlib.md5(name.encode()).hexdigest()[:28]
+
+
+def _lidar_box_to_global(box7, ego_trans, ego_quat, lidar_cs):
+    """(x,y,z,w,l,h,yaw) in the LIDAR frame -> nuScenes global translation/size/rotation.
+
+    The DB uses the CARLA LIDAR calibrated_sensor (lidar_cs, identity) and the
+    per-frame ego_pose; get_sample_data() will invert this exact chain
+    (global -> ego -> lidar) so boxes round-trip back to box7.
+      global = ego_pose ∘ lidar_cs ∘ box
+    Returns (translation[3], size[w,l,h], rotation[wxyz]).
+    """
+    x, y, z, w, l, h, yaw = [float(v) for v in box7[:7]]
+    # box pose in lidar frame
+    box_q = Quaternion(axis=[0, 0, 1], radians=yaw)
+    p = np.array([x, y, z])
+
+    l2e_r = Quaternion(lidar_cs["rotation"])
+    l2e_t = np.array(lidar_cs["translation"])
+    e2g_r = Quaternion(ego_quat)
+    e2g_t = np.array(ego_trans)
+
+    # lidar -> ego
+    p_ego = l2e_r.rotate(p) + l2e_t
+    q_ego = l2e_r * box_q
+    # ego -> global
+    p_glob = e2g_r.rotate(p_ego) + e2g_t
+    q_glob = e2g_r * q_ego
+
+    size = [w, l, h]  # nuScenes size = [w, l, h]
+    return p_glob.tolist(), size, [q_glob.w, q_glob.x, q_glob.y, q_glob.z]
+
+
+def _build_annotation_tables(scenes_map, lidar_cs):
+    """Build category / instance / sample_annotation tables + per-sample anns.
+
+    Returns (category_table, instance_table, sample_annotation_table, anns_by_sample).
+    One sample_annotation per gt box per frame; instances chain the same actor
+    (keyed by gt_ind) across a scene so PredictHelper can walk fut/past trajs.
+    """
+    category_table = [{"token": _category_token(c), "name": c, "description": c}
+                      for c in NUSC_CLASSES]
+
+    instance_table = []
+    sample_annotation_table = []
+    anns_by_sample = {}
+
+    for scene_token, scene_infos in scenes_map.items():
+        scene_infos = sorted(scene_infos, key=lambda x: x["frame_idx"])
+        # Per actor (keyed by stable gt_ind), collect its per-frame annotation
+        # records in frame order so we can chain prev/next.
+        actor_recs = {}   # gid -> list of dict(sample_token, ann_token, cat, box7, npts)
+        for info in scene_infos:
+            sample_token = info["token"]
+            boxes = info["gt_boxes"]
+            names = info["gt_names"]
+            inds = info["gt_inds"]
+            npts = info.get("num_lidar_pts", np.full(len(boxes), 10, dtype=int))
+            ego_t = [float(x) for x in info["ego2global_translation"]]
+            ego_q = info["ego2global_rotation"]
+            for k in range(len(boxes)):
+                gid = int(inds[k])
+                ann_token = f"ann_{scene_token}_{gid}_{info['frame_idx']:04d}"
+                trans, size, rot = _lidar_box_to_global(boxes[k], ego_t, ego_q, lidar_cs)
+                actor_recs.setdefault(gid, []).append({
+                    "sample_token": sample_token,
+                    "ann_token": ann_token,
+                    "category": str(names[k]) if str(names[k]) in NUSC_CLASSES else "car",
+                    "translation": trans,
+                    "size": size,
+                    "rotation": rot,
+                    "num_pts": int(npts[k]),
+                })
+                anns_by_sample.setdefault(sample_token, []).append(ann_token)
+
+        for gid, recs in actor_recs.items():
+            instance_token = f"inst_{scene_token}_{gid}"
+            m = len(recs)
+            for j, r in enumerate(recs):
+                sample_annotation_table.append({
+                    "token": r["ann_token"],
+                    "sample_token": r["sample_token"],
+                    "instance_token": instance_token,
+                    "visibility_token": "4",       # fully visible (nuScenes 1-4 scale)
+                    "attribute_tokens": [],
+                    "translation": r["translation"],
+                    "size": r["size"],
+                    "rotation": r["rotation"],
+                    "prev": recs[j - 1]["ann_token"] if j > 0 else "",
+                    "next": recs[j + 1]["ann_token"] if j < m - 1 else "",
+                    "num_lidar_pts": r["num_pts"],
+                    "num_radar_pts": 0,
+                })
+            instance_table.append({
+                "token": instance_token,
+                "category_token": _category_token(recs[0]["category"]),
+                "nbr_annotations": m,
+                "first_annotation_token": recs[0]["ann_token"],
+                "last_annotation_token": recs[-1]["ann_token"],
+            })
+
+    return category_table, instance_table, sample_annotation_table, anns_by_sample
+
 
 def build_tables(pkl_path: pathlib.Path, out_dir: pathlib.Path):
     with open(pkl_path, "rb") as f:
         data = pickle.load(f)
     infos = data["infos"]
+
+    # Real CARLA sensor extrinsics from the infos. lidar2ego is identity, so the
+    # camera sensor2lidar IS the calibrated_sensor (sensor->ego). The DB must
+    # describe the ACTUAL CARLA rig — using nuScenes proxy extrinsics makes
+    # get_sample_data() project boxes onto the wrong place (they float off the
+    # rendered cars), which breaks devkit viz / nuScenes-style eval.
+    ref_cams = infos[0]["cams"]
+    carla_cs = {"LIDAR_TOP": {"translation": [0.0, 0.0, 0.0],
+                              "rotation": [1.0, 0.0, 0.0, 0.0],
+                              "intrinsic": []}}
+    for cam in CAMERA_NAMES:
+        R = np.asarray(ref_cams[cam]["sensor2lidar_rotation"], dtype=float)
+        t = np.asarray(ref_cams[cam]["sensor2lidar_translation"], dtype=float)
+        q = Quaternion(matrix=R, rtol=1e-4, atol=1e-4)
+        carla_cs[cam] = {
+            "translation": [float(v) for v in t],
+            "rotation": [float(q.w), float(q.x), float(q.y), float(q.z)],
+            "intrinsic": [[float(v) for v in row] for row in ref_cams[cam]["cam_intrinsic"]],
+        }
 
     # Group frames by scene (episode)
     scenes_map: dict[str, list] = {}
@@ -117,12 +250,13 @@ def build_tables(pkl_path: pathlib.Path, out_dir: pathlib.Path):
             "channel": ch,
             "modality": cal["modality"],
         })
+        ext = carla_cs[ch]
         entry = {
             "token": cal["cs_token"],
             "sensor_token": cal["sensor_token"],
-            "translation": cal["translation"],
-            "rotation": cal["rotation"],
-            "camera_intrinsic": CARLA_CAM_INTRINSIC if cal["modality"] == "camera" else [],
+            "translation": ext["translation"],
+            "rotation": ext["rotation"],
+            "camera_intrinsic": ext["intrinsic"] if cal["modality"] == "camera" else [],
         }
         cs_table.append(entry)
 
@@ -222,7 +356,7 @@ def build_tables(pkl_path: pathlib.Path, out_dir: pathlib.Path):
                 "prev": scene_infos[idx-1]["token"] if idx > 0 else "",
                 "next": scene_infos[idx+1]["token"] if idx < n-1 else "",
                 "scene_token": scene_token,
-                "anns": [],
+                "anns": [],   # filled after annotation tables are built
                 "data": cam_data_tokens,
             })
 
@@ -236,13 +370,28 @@ def build_tables(pkl_path: pathlib.Path, out_dir: pathlib.Path):
         "log_tokens": all_log_tokens,
     }]
 
-    # Empty tables (no agents, annotations, etc.)
+    # --- Agent annotation tables (Task 3/6): category / instance / sample_annotation,
+    # transformed from the infos lidar-frame gt_boxes into the global frame using
+    # the (identity) LIDAR calibrated_sensor + per-frame ego pose. Identity keeps
+    # the DB lidar frame == the CARLA lidar frame the infos use, so get_sample_data
+    # round-trips to boxes AND projects correctly onto the cameras. ---
+    lidar_cs = {"rotation": carla_cs["LIDAR_TOP"]["rotation"],
+                "translation": carla_cs["LIDAR_TOP"]["translation"]}
+    category_table, instance_table, sample_annotation_table, anns_by_sample = \
+        _build_annotation_tables(scenes_map, lidar_cs)
+    # Attach per-sample annotation token lists (len(anns) == gt_boxes per frame).
+    for s in sample_table:
+        s["anns"] = anns_by_sample.get(s["token"], [])
+
+    # Remaining still-empty tables.
     empty = {
-        "sample_annotation": [],
-        "instance": [],
-        "category": [],
         "attribute": [],
-        "visibility": [],
+        "visibility": [
+            {"token": "1", "level": "v0-40", "description": "0-40% visible"},
+            {"token": "2", "level": "v40-60", "description": "40-60% visible"},
+            {"token": "3", "level": "v60-80", "description": "60-80% visible"},
+            {"token": "4", "level": "v80-100", "description": "80-100% visible"},
+        ],
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -255,13 +404,17 @@ def build_tables(pkl_path: pathlib.Path, out_dir: pathlib.Path):
         "sample_data": sample_data_table,
         "ego_pose": ego_pose_table,
         "map": map_table,
+        "category": category_table,
+        "instance": instance_table,
+        "sample_annotation": sample_annotation_table,
         **empty,
     }
     for name, rows in tables.items():
         (out_dir / f"{name}.json").write_text(json.dumps(rows))
     (out_dir / "version.txt").write_text("v1.0-carla\n")
     print(f"Wrote {len(scene_table)} scenes, {len(sample_table)} samples, "
-          f"{len(sample_data_table)} sample_data, {len(ego_pose_table)} ego_poses")
+          f"{len(sample_data_table)} sample_data, {len(ego_pose_table)} ego_poses, "
+          f"{len(sample_annotation_table)} annotations, {len(instance_table)} instances")
     print(f"→ {out_dir}")
 
 

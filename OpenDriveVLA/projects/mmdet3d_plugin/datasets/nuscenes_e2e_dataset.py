@@ -56,6 +56,7 @@ class NuScenesE2EDataset(NuScenesDataset):
                  use_nonlinear_optimizer=False,
                  lane_ann_file=None,
                  eval_mod=None,
+                 carla_lot_gt=None,
 
                  # For debug
                  is_debug=False,
@@ -77,6 +78,7 @@ class NuScenesE2EDataset(NuScenesDataset):
 
         self.is_debug = is_debug
         self.len_debug = len_debug
+        self.carla_lot_gt = carla_lot_gt
         super().__init__(*args, **kwargs)
         self.queue_length = queue_length
         self.overlap_test = overlap_test
@@ -123,6 +125,16 @@ class NuScenesE2EDataset(NuScenesDataset):
             self.data_root,
             patch_size=self.patch_size,
             canvas_size=self.canvas_size)
+        # CARLA parking lot map GT (approach B): swap the nuScenes vector map for a
+        # drop-in that returns lot slot/drivable/aisle vectors from a precomputed
+        # lot_map_gt JSON. When set, obtain_map_info() is skipped (no real nuScenes
+        # map layers exist for the CARLA lot).
+        self._carla_map = bool(getattr(self, 'carla_lot_gt', None))
+        if self._carla_map:
+            from projects.mmdet3d_plugin.datasets.data_utils.carla_vector_map import CarlaVectorMap
+            self.vector_map = CarlaVectorMap(
+                self.carla_lot_gt, patch_size=self.patch_size,
+                canvas_size=self.canvas_size)
         self.traj_api = NuScenesTraj(self.nusc,
                                      self.predict_steps,
                                      self.planning_steps,
@@ -479,12 +491,19 @@ class NuScenesE2EDataset(NuScenesDataset):
                 gt_labels.append(cls)
                 gt_bboxes.append(gt_bbox)
                 gt_masks.append(gt_mask)
-        map_mask = obtain_map_info(self.nusc,
-                                   self.nusc_maps,
-                                   info,
-                                   patch_size=self.patch_size,
-                                   canvas_size=self.canvas_size,
-                                   layer_names=['lane_divider', 'road_divider'])
+        if getattr(self, '_carla_map', False):
+            # No real nuScenes map layers for the CARLA lot: emit an empty
+            # lane-divider map_mask (shape [3, H, W] -> [:-1] gives 2 empty
+            # divider classes), keeping the label/bbox/mask layout identical.
+            map_mask = np.zeros((3, self.canvas_size[0], self.canvas_size[1]),
+                                dtype=np.uint8)
+        else:
+            map_mask = obtain_map_info(self.nusc,
+                                       self.nusc_maps,
+                                       info,
+                                       patch_size=self.patch_size,
+                                       canvas_size=self.canvas_size,
+                                       layer_names=['lane_divider', 'road_divider'])
         map_mask = np.flip(map_mask, axis=1)
         map_mask = np.rot90(map_mask, k=-1, axes=(1, 2))
         map_mask = torch.tensor(map_mask.copy())

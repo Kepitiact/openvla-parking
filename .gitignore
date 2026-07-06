@@ -33,6 +33,10 @@ data/nuscenes/LICENSE
 # nuScenes mini used for the UniAD domain-gap sanity test (data, kept locally)
 nuscenes_sample_test/
 
+# Regenerable GT/validation overlays (produced by the validation scripts)
+data/gt_overlays_validate/
+data/gt_overlays/
+
 # Reference paper PDF (large binary, not code)
 opendrivevlapaper.pdf
 
