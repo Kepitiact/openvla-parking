@@ -581,8 +581,8 @@ class UniADTrack(MVXTwoStageDetector):
         get_keys += ["track_instances"]
         out.update({k: frame_res[k] for k in get_keys})
         
-        # losses = self.criterion.losses_dict
-        losses = {}
+        # Track losses accumulated per-frame by ClipMatcher during the forward loop.
+        losses = self.criterion.losses_dict
         return losses, out
 
     def upsample_bev_if_tiny(self, outs_track):

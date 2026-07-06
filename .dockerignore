@@ -1,0 +1,28 @@
+# Keep the Docker build context tiny. The image is env-only: it needs
+# requirements.lock.txt and OpenDriveVLA/third_party/mmdetection3d_1_0_0rc6.
+# Everything heavy (data, venv, checkpoints, DB) is mounted at runtime.
+.git
+.venv
+venv
+**/__pycache__
+**/.cache
+OpenDriveVLA/.cache
+
+# Data + DB (scp'd to HAL separately, bind-mounted)
+data
+data_carla
+nuscenes_sample_test
+
+# Checkpoints (scp'd to HAL separately, bind-mounted)
+ckpts
+OpenDriveVLA/ckpts
+checkpoints
+outputs
+OpenDriveVLA/output
+
+# Bulky reference material not needed to build the env
+opendrivevlapaper.pdf
+notebooks
+hello.sif
+*.sif
+*.log

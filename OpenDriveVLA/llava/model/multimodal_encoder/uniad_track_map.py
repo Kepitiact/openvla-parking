@@ -86,7 +86,7 @@ class UniadTrackMapModel(PreTrainedModel):
         if self.vision_tower_test_mode:
             _, results_for_vlm = self.vision_model(return_loss=False, rescale=True, **data)
         else:
-            _, results_for_vlm = self.vision_model(return_loss=True, rescale=True, **data)
+            _, results_for_vlm = self.vision_model(return_loss=True, rescale=True, return_vlm=True, **data)
         return results_for_vlm
 
 class UniadTrackMapVisionTower(nn.Module):

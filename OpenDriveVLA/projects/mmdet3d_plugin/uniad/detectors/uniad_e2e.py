@@ -229,9 +229,15 @@ class UniAD(UniADTrack):
         for k,v in losses.items():
             losses[k] = torch.nan_to_num(v)
 
-        results_for_vlm = self.get_results_for_vlm(img_metas[0], outs_track, outs_seg[0], sdc_planning[0], sdc_planning_mask[0], command[0], in_uniad_train=True, **kwargs)
+        # forward_train has two consumers with different contracts:
+        #  - mmdet train_step (stage-1 UniAD training) requires a loss dict.
+        #  - the VLM vision tower extracts features and passes return_vlm=True.
+        # Default to the mmdet contract; only return VLM features when asked.
+        if kwargs.get("return_vlm", False):
+            results_for_vlm = self.get_results_for_vlm(img_metas[0], outs_track, outs_seg[0], sdc_planning[0], sdc_planning_mask[0], command[0], in_uniad_train=True, **kwargs)
+            return losses, results_for_vlm
 
-        return [], results_for_vlm
+        return losses
     
     def loss_weighted_and_prefixed(self, loss_dict, prefix=''):
         loss_factor = self.task_loss_weight[prefix]

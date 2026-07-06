@@ -493,9 +493,10 @@ class NuScenesE2EDataset(NuScenesDataset):
                 gt_masks.append(gt_mask)
         if getattr(self, '_carla_map', False):
             # No real nuScenes map layers for the CARLA lot: emit an empty
-            # lane-divider map_mask (shape [3, H, W] -> [:-1] gives 2 empty
-            # divider classes), keeping the label/bbox/mask layout identical.
-            map_mask = np.zeros((3, self.canvas_size[0], self.canvas_size[1]),
+            # map_mask matching obtain_map_info's [2, H, W] layout ([erode,
+            # divider]), so map_mask[:-1] yields exactly 1 (empty) stuff class
+            # (label == map_num_classes), consistent with num_stuff_classes=1.
+            map_mask = np.zeros((2, self.canvas_size[0], self.canvas_size[1]),
                                 dtype=np.uint8)
         else:
             map_mask = obtain_map_info(self.nusc,
