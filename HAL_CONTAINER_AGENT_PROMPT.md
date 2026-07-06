@@ -86,27 +86,31 @@ now, not when the full dataset is finally ready.
   `OpenDriveVLA/third_party/mmdetection3d_1_0_0rc6/tools/dist_train.sh <config> <NUM_GPUS>`
   (torchrun). On Slurm this becomes `srun apptainer exec --nv img.sif bash dist_train.sh ...`.
 
-## Datasets: a small SLICE for the smoke test, the full set for training
+## Datasets: a few small episodes for the smoke test, the full set for training
 
-A full, validated **~1500-episode** dataset already exists locally (this is the real
-training data). **Do NOT ship the whole thing for the smoke test** — it's ~2.9 GB
-pkl + ~2.0 GB DB (a 1.6 GB `sample_annotation.json`) + tens of GB of images, and
-loading that DB is slow. It would make every debug iteration painful.
+A full, validated **~1500-episode** dataset exists (the real training data). **Do NOT
+ship the whole thing for the smoke test** — it's ~2.6 GB pkl + ~1.8 GB DB + tens of GB
+of images, and loading that DB is slow. Use a few episodes for the smoke test.
 
-Instead:
-- **Smoke test → a tiny slice (~5–10 episodes).** I'll carve `data_carla/raw/episode_*`
-  down to a handful, then rebuild a matching small DB with
-  `python scripts/build_carla_nusc_tables.py` (run from repo root; it writes
-  `data/nuscenes/v1.0-carla/` and patches `data_carla/processed/parking_infos_temporal.pkl`).
-  Layout under the repo: `data_carla/raw/episode_*/` (images + json),
-  `data_carla/processed/parking_infos_temporal.pkl`,
-  `data_carla/processed/lot_map_gt_<map>.json`, `data/nuscenes/v1.0-carla/`.
-- **Training → the full ~1500-episode set, mounted (not baked) into the container.**
-  Same image, just a different `--bind` path. This is the "one go" plan: build the
-  image once, validate on the slice, then train on the full set with no rebuild.
+**Smoke-test data flow (paths must be HAL-absolute, so rebuild on HAL — don't ship a
+prebuilt pkl/DB; its image paths are baked to another machine):**
+1. I scp ~3 small raw episodes into `data_carla/raw/` and the lot GT into
+   `data_carla/processed/lot_map_gt_Town04_Opt.json` on HAL (each episode ~25 MB).
+2. Rebuild in-repo, **from repo root**, so paths resolve on HAL:
+   ```
+   python scripts/build_infos_pkl.py --raw_dir data_carla/raw \
+       --out data_carla/processed/parking_infos_temporal.pkl --absolute-paths --max-range 32
+   python scripts/build_carla_nusc_tables.py          # writes data/nuscenes/v1.0-carla/
+   python scripts/split_infos_train_val.py            # -> parking_infos_{train,val}.pkl
+   ```
+   All three builders are in `scripts/`. This yields the default layout the config
+   expects (`data_carla/processed/*.pkl`, `data/nuscenes/v1.0-carla/`), so no env-var
+   overrides are needed for the smoke test.
 
-Keep the image **data-free**; mount both the repo and the data at runtime via
-`apptainer exec --bind ...`.
+**Training → the full ~1500-episode set**, placed at the same `data_carla/` +
+`data/nuscenes/` layout (scp raw + rebuild, or scp the prebuilt pkl/DB and rebuild).
+Keep the image **data-free**; bind-mount the repo (which contains the data dirs) into
+the container at runtime via `apptainer exec --bind ...`.
 
 ## Plan (phased — report back at the end of each phase before proceeding)
 
