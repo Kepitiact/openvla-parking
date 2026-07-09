@@ -36,6 +36,7 @@ nuscenes_sample_test/
 # Regenerable GT/validation overlays (produced by the validation scripts)
 data/gt_overlays_validate/
 data/gt_overlays/
+data/gt_train_viz/
 
 # Reference paper PDF (large binary, not code)
 opendrivevlapaper.pdf
