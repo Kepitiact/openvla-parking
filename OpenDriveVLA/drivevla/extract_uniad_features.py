@@ -69,7 +69,43 @@ def parse_args():
     ap.add_argument("--out-dir", default="../data_carla/processed/uniad_features")
     ap.add_argument("--max-samples", type=int, default=None)
     ap.add_argument("--num-workers", type=int, default=1)
+    # Shard BY SCENE across GPUs. Safe because UniAD's temporal state is per-scene
+    # (uniad_e2e.py resets prev_bev whenever scene_token changes), so whole scenes are
+    # independent. Frame order WITHIN a scene is preserved, which is what matters.
+    ap.add_argument("--num-shards", type=int, default=1)
+    ap.add_argument("--shard-idx", type=int, default=0)
     return ap.parse_args()
+
+
+def _select_shard(data_infos, num_shards, shard_idx):
+    """Keep only the scenes belonging to this shard, preserving frame order.
+
+    Scenes are assigned longest-first to the currently-emptiest shard (LPT), because
+    episodes vary a lot (14-147 frames) and naive round-robin leaves one shard running
+    long after the others finish.
+    """
+    if num_shards <= 1:
+        return data_infos
+    order, lengths = [], {}
+    for i in data_infos:
+        s = i["scene_token"]
+        if s not in lengths:
+            lengths[s] = 0
+            order.append(s)
+        lengths[s] += 1
+
+    loads = [0] * num_shards
+    owner = {}
+    for s in sorted(order, key=lambda s: (-lengths[s], s)):   # deterministic
+        k = min(range(num_shards), key=lambda j: (loads[j], j))
+        owner[s] = k
+        loads[k] += lengths[s]
+
+    mine = [i for i in data_infos if owner[i["scene_token"]] == shard_idx]
+    print(f"[shard {shard_idx}/{num_shards}] {len(mine)} frames, "
+          f"{sum(1 for s in owner.values() if s == shard_idx)} scenes "
+          f"(shard loads: {loads})")
+    return mine
 
 
 def _to_cpu(x):
@@ -110,13 +146,25 @@ def main():
     import torch.distributed as dist
 
     # Some UniAD collect/reduce ops assume a process group exists; make a 1-proc one.
+    # NEVER hardcode the port: sharded extraction runs several of these concurrently on
+    # ONE node, and they would all fight over the same port ("Address already in use").
+    # world_size=1, so any free port is fine — let the OS pick.
     if not dist.is_initialized():
+        import socket
+
+        def _free_port():
+            s = socket.socket()
+            s.bind(("", 0))
+            port = s.getsockname()[1]
+            s.close()
+            return str(port)
+
         os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-        os.environ.setdefault("MASTER_PORT", "29598")
+        os.environ.setdefault("MASTER_PORT", _free_port())
         os.environ.setdefault("RANK", "0")
         os.environ.setdefault("WORLD_SIZE", "1")
         os.environ.setdefault("LOCAL_RANK", "0")
-        torch.cuda.set_device(0)
+        torch.cuda.set_device(int(os.environ.get("SHARD_GPU", 0)))
         dist.init_process_group(backend="nccl", rank=0, world_size=1)
 
     cfg = Config.fromfile(args.config)
@@ -142,6 +190,8 @@ def main():
 
     print("[1/3] Building dataset ...")
     dataset = build_dataset(cfg.data.test)
+    dataset.data_infos = _select_shard(dataset.data_infos,
+                                       args.num_shards, args.shard_idx)
     if args.max_samples is not None:
         dataset.data_infos = dataset.data_infos[:args.max_samples]
     # shuffle=False keeps frames in scene order — UniAD is temporally stateful, so the
@@ -220,7 +270,12 @@ def main():
     # UniAD carries temporal state across frames within a scene, so skipping a frame
     # would feed the next one a stale prev_bev and silently corrupt its features.
 
-    if args.conversations and os.path.exists(args.conversations):
+    if args.num_shards > 1:
+        # Every shard would read-modify-write the same JSON concurrently and corrupt it.
+        # Stamp once, after all shards finish (see scripts/hal_extract_features.sbatch).
+        print(f"[shard {args.shard_idx}] skipping conversations stamping (sharded run); "
+              "stamp once after all shards complete.")
+    elif args.conversations and os.path.exists(args.conversations):
         print(f"Updating {args.conversations} with uniad_pth paths...")
         with open(args.conversations) as f:
             convs = json.load(f)

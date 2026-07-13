@@ -42,9 +42,21 @@ def main():
     from mmcv.runner import load_checkpoint
 
     # Some collection/reduce ops assume a process group; init a trivial 1-proc group.
+    # The port MUST NOT be hardcoded: two eval jobs scheduled on the same node would
+    # both try to bind it and the second dies with "Address already in use". Since this
+    # group is world_size=1, any free port works — ask the OS for one.
     if not dist.is_initialized():
+        import socket
+
+        def _free_port():
+            s = socket.socket()
+            s.bind(("", 0))
+            port = s.getsockname()[1]
+            s.close()
+            return str(port)
+
         os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-        os.environ.setdefault("MASTER_PORT", "29599")
+        os.environ.setdefault("MASTER_PORT", _free_port())
         os.environ.setdefault("RANK", "0")
         os.environ.setdefault("WORLD_SIZE", "1")
         os.environ.setdefault("LOCAL_RANK", "0")
