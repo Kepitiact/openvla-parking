@@ -83,3 +83,7 @@ OpenDriveVLA/drivevla/eval_share/gt/
 # --- Generic coding-guideline docs (not useful to others) ---
 CLAUDE.md
 EXAMPLES.md
+
+# UniAD stage-1 checkpoints (a `git stash -u` once swept these into a stash)
+checkpoints/**/*.pth
+checkpoints/**/latest.pth
