@@ -67,11 +67,26 @@ def load_model_with_deepspeed(args, device):
     # vision tower, so its checkpoint bakes the ORIGINAL nuScenes UniAD weights, which
     # load_pretrained_model restores over the CARLA-trained checkpoint the tower loaded
     # at build time. Without this reload, inference silently runs nuScenes UniAD on CARLA
-    # images and near-field detection collapses. Same fix as extract_uniad_features.py.
+    # images and near-field detection collapses.
+    #
+    # This reload is only SAFE because the vision tower is frozen during VLA training
+    # (train_drivevla.py freezes everything, then unfreezes only --trainable-groups,
+    # which defaults to "projectors"; uniad_track_map additionally calls
+    # requires_grad_(False)). If the tower were ever fine-tuned (--trainable-groups
+    # ...,uniad), reloading would DESTROY those fine-tuned weights — so assert it.
+    _tower = model.get_vision_tower()
+    _tuned = [n for n, p in _tower.named_parameters() if p.requires_grad]
+    if _tuned:
+        raise RuntimeError(
+            "Refusing to reload UniAD weights: the vision tower has trainable "
+            f"parameters ({len(_tuned)}, e.g. {_tuned[0]}), so it was fine-tuned during "
+            "VLA training and this reload would destroy it. If you trained with "
+            "--trainable-groups including 'uniad', the tower weights already live in the "
+            "VLA checkpoint — skip the reload (unset UNIAD_CKPT_FORCE) instead.")
+
     from mmcv.runner import load_checkpoint as _load_uniad_ckpt
-    _uniad_ckpt = os.environ.get("UNIAD_CKPT", "checkpoints/uniad_base_track_map.pth")
-    _load_uniad_ckpt(model.get_vision_tower().vision_tower.vision_model,
-                     _uniad_ckpt, map_location="cpu")
+    _uniad_ckpt = os.environ.get("UNIAD_CKPT", "checkpoints/uniad_carla_trained.pth")
+    _load_uniad_ckpt(_tower.vision_tower.vision_model, _uniad_ckpt, map_location="cpu")
     print(f"[fix] reloaded CARLA UniAD weights into vision tower from {_uniad_ckpt}")
 
     # DeepSpeed inference configuration

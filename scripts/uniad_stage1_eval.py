@@ -28,7 +28,12 @@ def main():
     ap.add_argument("--dump-out", required=True, help="output path for the predictions pkl")
     ap.add_argument("--max-samples", type=int, default=None,
                     help="only run the first N val frames (dry-run subset)")
+    ap.add_argument("--source", choices=["track", "det"], default="track",
+                    help="'track' = confirmed tracked boxes (boxes_3d); "
+                         "'det' = raw per-frame detections (boxes_3d_det, ~300/frame)")
     args = ap.parse_args()
+    BK, SK, LK = ({"track": ("boxes_3d", "scores_3d", "labels_3d"),
+                   "det": ("boxes_3d_det", "scores_3d_det", "labels_3d_det")}[args.source])
 
     import numpy as np
     import torch
@@ -90,14 +95,15 @@ def main():
         _struct(results[0])
 
     def _find_boxes(det):
-        # track boxes may sit at top level or under 'pts_bbox'
+        # boxes may sit at top level or under 'pts_bbox'
         if isinstance(det, dict):
-            if "boxes_3d" in det:
+            if BK in det:
                 return det
-            if isinstance(det.get("pts_bbox"), dict) and "boxes_3d" in det["pts_bbox"]:
+            if isinstance(det.get("pts_bbox"), dict) and BK in det["pts_bbox"]:
                 return det["pts_bbox"]
         return None
 
+    print(f"[source] scoring '{args.source}' boxes ({BK})")
     preds = []
     for i, det in enumerate(results):
         d = _find_boxes(det)
@@ -108,14 +114,15 @@ def main():
                               labels=np.zeros((0,), np.int64),
                               track_ids=np.full((0,), -1, np.int64)))
             continue
-        boxes = _np(d["boxes_3d"].tensor)[:, :7].astype(np.float32)
-        scores = _np(d["scores_3d"]).astype(np.float32)
-        labels = _np(d["labels_3d"]).astype(np.int64)
+        boxes = _np(d[BK].tensor)[:, :7].astype(np.float32)
+        scores = _np(d[SK]).astype(np.float32)
+        labels = _np(d[LK]).astype(np.int64)
         tk = None
-        for key in ("track_ids", "instance_ids", "obj_idxes", "track_scores"):
-            if key in d:
-                tk = _np(d[key]).reshape(-1).astype(np.int64)
-                break
+        if args.source == "track":
+            for key in ("track_ids", "instance_ids", "obj_idxes", "track_scores"):
+                if key in d:
+                    tk = _np(d[key]).reshape(-1).astype(np.int64)
+                    break
         track_ids = tk if (tk is not None and len(tk) == len(scores)) \
             else np.full(len(scores), -1, np.int64)
         preds.append(dict(token=token, boxes=boxes, scores=scores,

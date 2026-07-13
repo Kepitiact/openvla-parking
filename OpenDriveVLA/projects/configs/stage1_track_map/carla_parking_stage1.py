@@ -810,9 +810,14 @@ log_config = dict(
 )
 checkpoint_config = dict(interval=1)
 # Warm-start from the nuScenes-trained UniAD track+map weights. On HAL, point
-# UNIAD_WARMSTART at uniad_base_track_map.pth (extract via
+# UNIAD_WARMSTART at ckpts/uniad_nuscenes_pretrain.pth (extract via
 # scripts/extract_uniad_from_opendrivevla.py). load_from tolerates the BEV range
 # rescale because all tensor shapes are unchanged (bev_h_/bev_w_ kept at 200).
-load_from = _os.environ.get("UNIAD_WARMSTART") or "ckpts/uniad_base_track_map.pth"
+#
+# NAMING: this is the nuScenes PRETRAIN (warm-start only). The CARLA-TRAINED model is
+# checkpoints/uniad_carla_trained.pth. They used to share the filename
+# `uniad_base_track_map.pth` in two different dirs — pointing the detector at the wrong
+# one silently reverted it to nuScenes weights. Never reuse that name.
+load_from = _os.environ.get("UNIAD_WARMSTART") or "ckpts/uniad_nuscenes_pretrain.pth"
 
 find_unused_parameters = True

@@ -69,7 +69,14 @@ class UniadTrackMapModel(PreTrainedModel):
         model = build_model(uniad_config_mmlab.model, test_cfg=uniad_config_mmlab.get('test_cfg'))
 
         if self.load_mmdet3d_weights:
-            checkpoint = load_checkpoint(model, 'checkpoints/uniad_base_track_map.pth', map_location='cpu')
+            # Explicit at the call site, like the geometry. Historically this path was
+            # hardcoded to 'checkpoints/uniad_base_track_map.pth' -- a filename shared by
+            # TWO different models (the 200 MB nuScenes warm-start and the CARLA-trained
+            # model), so pointing it at the wrong one silently reverted the detector to
+            # nuScenes weights. Set UNIAD_CKPT to the trained checkpoint.
+            ckpt = os.environ.get("UNIAD_CKPT", "checkpoints/uniad_carla_trained.pth")
+            rank0_print(f"[UniAD] loading vision-tower weights: {ckpt}")
+            checkpoint = load_checkpoint(model, ckpt, map_location='cpu')
 
             if 'CLASSES' in checkpoint.get('meta', {}):
                 model.CLASSES = checkpoint['meta']['CLASSES']
@@ -89,12 +96,80 @@ class UniadTrackMapModel(PreTrainedModel):
             _, results_for_vlm = self.vision_model(return_loss=True, rescale=True, return_vlm=True, **data)
         return results_for_vlm
 
+# The config UniAD was TRAINED with. It is the single source of truth for the BEV
+# geometry: if the tower samples BEV features at a different point_cloud_range than
+# training used, the detector is silently wrong (this is exactly how the +/-51.2 bug
+# survived -- the tower read a hardcoded config nobody passed in or reviewed).
+UNIAD_TRAIN_CONFIG = "projects/configs/stage1_track_map/carla_parking_stage1.py"
+_GEOMETRY_KEYS = ("point_cloud_range", "voxel_size", "patch_size", "bev_h_", "bev_w_")
+
+
+def resolve_uniad_config(vision_tower_cfg=None) -> str:
+    """Which UniAD config the vision tower should build from. Explicit at the call
+    site, in precedence order: caller attr -> UNIAD_CONFIG env -> the training config."""
+    cfg = getattr(vision_tower_cfg, "uniad_config", None) if vision_tower_cfg else None
+    return cfg or os.environ.get("UNIAD_CONFIG") or UNIAD_TRAIN_CONFIG
+
+
+# Configs whose geometry MUST agree with the training config. point_cloud_range is
+# declared independently in several of these (mmcv 1.x can't reference a _base_ var from
+# a child, so it can't be de-duplicated by inheritance) — and that duplication is the
+# entire root cause of the +/-51.2 bug. Since we can't make divergence impossible, we
+# make it LOUD: every config on the VLA data/model path is checked at tower-build time.
+_MUST_AGREE = (
+    "projects/configs/stage1_track_map/base_track_map.py",   # roots the VLA data configs
+    "projects/configs/stage1_track_map/carla_parking.py",    # VLA train/extract data cfg
+)
+
+
+def _geometry_diff(cfg, train):
+    return {k: (cfg.get(k), train.get(k)) for k in _GEOMETRY_KEYS
+            if cfg.get(k) != train.get(k)}
+
+
+def assert_geometry_matches_training(cfg, cfg_path: str) -> None:
+    """Crash if any config on the UniAD path disagrees with the TRAINING geometry.
+
+    A wrong point_cloud_range does not raise — it quietly produces garbage detections
+    (near-field recall went 1.00 -> 0.04 and nobody noticed). Fail loudly instead.
+    """
+    train = Config.fromfile(UNIAD_TRAIN_CONFIG)
+
+    to_check = [(cfg_path, cfg)]
+    for p in _MUST_AGREE:
+        if os.path.exists(p) and os.path.abspath(p) != os.path.abspath(cfg_path):
+            try:
+                to_check.append((p, Config.fromfile(p)))
+            except Exception:      # a config we can't parse isn't on the hot path
+                continue
+
+    problems = []
+    for path, c in to_check:
+        d = _geometry_diff(c, train)
+        if d:
+            problems.append(f"  {path}\n" + "\n".join(
+                f"    {k}: got={got!r}  training={want!r}" for k, (got, want) in d.items()))
+    if problems:
+        raise ValueError(
+            "UniAD BEV geometry mismatch — features would be sampled at a different "
+            "scale than the model was trained with, silently corrupting every "
+            f"detection.\n  training config (source of truth): {UNIAD_TRAIN_CONFIG}\n"
+            + "\n".join(problems))
+
+
 class UniadTrackMapVisionTower(nn.Module):
     def __init__(self, vision_tower, vision_tower_cfg, delay_load=False):
         super().__init__()
 
-        uniad_config_dict = Config.fromfile('projects/configs/stage1_track_map/base_track_map.py').to_dict()
-        self.config = UniadTrackMapConfig(uniad_config_dict=uniad_config_dict)
+        # The UniAD config is a PARAMETER now, not a hardcoded filename: both things the
+        # detector depends on -- geometry (here) and weights (UNIAD_CKPT, see
+        # build_uniad_track_map_model) -- are explicit and overridable at the call site.
+        uniad_config_path = resolve_uniad_config(vision_tower_cfg)
+        _cfg = Config.fromfile(uniad_config_path)
+        assert_geometry_matches_training(_cfg, uniad_config_path)
+        rank0_print(f"[UniAD] config={uniad_config_path} "
+                    f"point_cloud_range={_cfg.get('point_cloud_range')}")
+        self.config = UniadTrackMapConfig(uniad_config_dict=_cfg.to_dict())
 
         self.vision_tower_name = vision_tower
         self.vision_tower: nn.Module = None

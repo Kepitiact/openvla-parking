@@ -35,7 +35,7 @@ mkdir -p "$WORKDIR"
 #   can't crash a multi-hour training job at an epoch boundary).
 # --cfg-options sets queue_length on the actual data pipelines without editing configs.
 srun singularity exec --nv \
-  --bind /workspaces/s0002438 \
+  --bind /workspaces/s0002438,/staging/short_range_perception \
   --pwd "$REPO/OpenDriveVLA" \
   --env PYTHONPATH="$REPO/OpenDriveVLA" \
   --env TRITON_CACHE_DIR="/tmp/triton_${SLURM_JOB_ID}" \
@@ -49,4 +49,5 @@ srun singularity exec --nv \
     --auto-resume \
     --no-validate \
     --cfg-options data.train.queue_length=$QL data.val.queue_length=$QL \
-                  checkpoint_config.max_keep_ckpts=2
+                  checkpoint_config.max_keep_ckpts=2 \
+                  checkpoint_config.by_epoch=False checkpoint_config.interval=1000

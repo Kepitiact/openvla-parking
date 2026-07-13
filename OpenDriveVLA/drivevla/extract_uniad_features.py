@@ -1,54 +1,102 @@
-"""
-Pre-compute UniAD BEV features for all CARLA frames and save as .pth files.
+"""Pre-compute UniAD features + decoded detections for CARLA frames -> per-frame .pth.
 
-This is a prerequisite for fine-tuning. Running UniAD once per frame during
-feature extraction is far cheaper than running it on every training step.
+Builds UniAD DIRECTLY from (config, checkpoint) — the same way
+scripts/uniad_stage1_eval.py does — instead of going through the LLaVA/OpenDriveVLA
+wrapper.
 
-After this script:
-  data_carla/processed/uniad_features/<token>.pth  for every frame
-  data_carla/processed/carla_conversations.json updated with uniad_pth paths
+WHY (this is the fix for a real, silent bug):
+  The old path called llava.model.builder.load_pretrained_model() to instantiate a
+  1.46 GB LLaVA-Qwen model and then used ONLY its vision tower. But OpenDriveVLA-0.5B
+  ships with `mm_tunable_parts` including `mm_vision_tower`, so its model.safetensors
+  bakes 1742 `vision_model.*` weights — the ORIGINAL nuScenes UniAD. Loading it
+  restored those weights OVER the CARLA-trained checkpoint the tower had just loaded,
+  so extraction silently ran nuScenes UniAD on CARLA parking images (proved by weight
+  signature: query_embedding.weight sum 1274.58 (nuScenes) vs 1321.52 (CARLA epoch_4)).
+  Near-field recall was 0.04 instead of 1.00.
 
-Usage (from OpenDriveVLA/ directory):
-  bash scripts/extract_carla_features.sh
-  # or directly:
-  PYTHONPATH=$(pwd):$PYTHONPATH python drivevla/extract_uniad_features.py
+  Building the model straight from (config, checkpoint) makes that class of bug
+  impossible: BOTH things the detector depends on — the weights and the BEV geometry —
+  are now explicit at the call site. There is no LLM, no tokenizer, no collator, and
+  no baked state to clobber anything.
+
+  The LLaVA wrapper adds nothing to the perception path: the model inputs from both
+  paths were verified byte-identical (same img sum, lidar2img, l2g, timestamp).
+
+The output .pth schema is UNCHANGED — reasoning_data_gen.SceneRecord.from_uniad and
+llava_arch.encode_vision_tower_result both depend on it, and must need zero edits.
+
+Usage (from OpenDriveVLA/):
+  python drivevla/extract_uniad_features.py \
+      --config projects/configs/stage1_track_map/carla_parking_stage1.py \
+      --checkpoint /abs/path/to/trained_uniad.pth \
+      --conversations ../data_carla/processed/carla_conversations.json \
+      --out-dir ../data_carla/processed/uniad_features \
+      [--ann-file ../data_carla/processed/subset.pkl] [--max-samples N]
+
+NOTE: --checkpoint is REQUIRED and has no default, on purpose. Two different models
+have historically shared the filename `uniad_base_track_map.pth` (the 200 MB nuScenes
+warm-start vs the CARLA-trained model); defaulting to a path is how you silently get
+the wrong weights. Pass it explicitly.
 """
 
 import argparse
+import importlib
 import json
 import os
 import pathlib
 import sys
 
-import _bootstrap  # noqa: F401  (sys.path + conditional nvcc shim; must precede llava/mmdet3d)
+import _bootstrap  # noqa: F401  (sys.path + conditional nvcc shim; must precede mmdet3d)
 
 import torch
-import torch.distributed as dist
-
 from tqdm import tqdm
-from mmengine import Config
-from llava.model.builder import load_pretrained_model
-from llava.utils import disable_torch_init
-from llava.train.train import DataArguments
-
-from data_utils.nuscenes_llava_dataset import LLaVANuScenesDataset
-from data_utils.nuscenes_llava_datacollector import DataCollatorForLLaVANuScenesDataset
-from data_utils.nuscenes_llava_distributed_sampler import ContinuousSceneDistributedSampler
-from torch.utils.data import DataLoader, SequentialSampler
 
 
 def parse_args():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model-path", default="../checkpoints/OpenDriveVLA-0.5B")
-    ap.add_argument("--uniad-config", default="projects/configs/stage1_track_map/carla_parking.py")
-    ap.add_argument("--conversations", default="../data_carla/processed/carla_conversations.json")
+    ap.add_argument("--config",
+                    default="projects/configs/stage1_track_map/carla_parking_stage1.py",
+                    help="UniAD config — the SAME one training used. Supplies both the "
+                         "model and the BEV geometry.")
+    ap.add_argument("--checkpoint", required=True,
+                    help="Trained CARLA UniAD checkpoint (absolute path). Required: "
+                         "no default, so the wrong weights can never be picked up.")
+    ap.add_argument("--conversations",
+                    default="../data_carla/processed/carla_conversations.json")
     ap.add_argument("--ann-file", default=None,
-                    help="Override the UniAD config's data.test.ann_file (the infos pkl). "
-                         "Use to extract only a subset, e.g. dagger_infos.pkl.")
+                    help="Override the config's data.test.ann_file (the infos pkl), "
+                         "e.g. to extract only a subset.")
     ap.add_argument("--out-dir", default="../data_carla/processed/uniad_features")
-    ap.add_argument("--batch-size", type=int, default=1)
-    ap.add_argument("--num-workers", type=int, default=4)
+    ap.add_argument("--max-samples", type=int, default=None)
+    ap.add_argument("--num-workers", type=int, default=1)
     return ap.parse_args()
+
+
+def _to_cpu(x):
+    if isinstance(x, torch.Tensor):
+        return x.cpu()
+    if isinstance(x, dict):
+        return {k: _to_cpu(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_to_cpu(v) for v in x]
+    return x
+
+
+def _decode(rt, keys, token, what):
+    """Pull a (boxes, scores, labels) triple out of the track result as plain CPU
+    tensors, so loading a .pth needs no mmdet3d box classes."""
+    try:
+        bk, sk, lk = keys
+        b = rt.get(bk)
+        if b is None:
+            return None
+        b = b.tensor if hasattr(b, "tensor") else b
+        return {"boxes": b.detach().cpu(),
+                "scores": rt[sk].detach().cpu(),
+                "labels": rt[lk].detach().cpu()}
+    except Exception as e:  # pragma: no cover - defensive, mirrors previous behaviour
+        print(f"  warn: no {what} for {token}: {e}")
+        return None
 
 
 def main():
@@ -57,145 +105,96 @@ def main():
     out_dir = pathlib.Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from mmcv import Config
+    from mmcv.runner import load_checkpoint
+    import torch.distributed as dist
 
-    # Load model (same as inference)
-    disable_torch_init()
-    overwrite_config = {"image_aspect_ratio": "pad", "vision_tower_test_mode": True}
-    tokenizer, model, _, _ = load_pretrained_model(
-        args.model_path,
-        model_base=None,
-        model_name="llava_qwen",
-        device_map=str(device),
-        multimodal=True,
-        attn_implementation="eager",
-        overwrite_config=overwrite_config,
-    )
-    model.eval()
-    vision_tower = model.get_vision_tower()
+    # Some UniAD collect/reduce ops assume a process group exists; make a 1-proc one.
+    if not dist.is_initialized():
+        os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+        os.environ.setdefault("MASTER_PORT", "29598")
+        os.environ.setdefault("RANK", "0")
+        os.environ.setdefault("WORLD_SIZE", "1")
+        os.environ.setdefault("LOCAL_RANK", "0")
+        torch.cuda.set_device(0)
+        dist.init_process_group(backend="nccl", rank=0, world_size=1)
 
-    # CRITICAL: OpenDriveVLA-0.5B was trained with `mm_tunable_parts` including the
-    # vision tower, so its checkpoint bakes the ORIGINAL nuScenes UniAD weights. The
-    # load_pretrained_model call above restores those over the CARLA-trained epoch_4
-    # that the tower loaded at build time, i.e. extraction would silently run nuScenes
-    # UniAD on CARLA images (near-field detection collapses). Force our checkpoint back
-    # into the UniAD backbone so the extracted features reflect the model we trained.
-    from mmcv.runner import load_checkpoint as _load_uniad_ckpt
-    _uniad_ckpt = os.environ.get("UNIAD_CKPT", "checkpoints/uniad_base_track_map.pth")
-    _load_uniad_ckpt(vision_tower.vision_tower.vision_model, _uniad_ckpt, map_location="cpu")
-    print(f"[fix] reloaded CARLA UniAD weights into vision tower from {_uniad_ckpt}")
+    cfg = Config.fromfile(args.config)
+    if cfg.get("plugin", False):
+        plugin_dir = cfg.get("plugin_dir", "projects/mmdet3d_plugin/")
+        importlib.import_module(os.path.dirname(plugin_dir).replace("/", "."))
 
-    # Dataset (test mode, no uniad_pth — we're generating them)
-    uniad_cfg = Config.fromfile(args.uniad_config)
+    from mmdet.datasets import build_dataloader, build_dataset
+    from mmdet3d.models import build_model
+
+    from drivevla.utils.remove_mmlab_datacontainer import remove_datacontainer
+    from drivevla.utils.tensor_utils import move_data_to_device
+
+    # The geometry the detector will actually use, printed so it can never be a
+    # silent surprise again (a wrong point_cloud_range is exactly how the last bug hid).
+    print(f"[cfg] {args.config}")
+    print(f"[cfg] point_cloud_range = {cfg.point_cloud_range}")
+    print(f"[cfg] patch_size        = {cfg.patch_size}")
+    print(f"[ckpt] {args.checkpoint}")
+
     if args.ann_file:
-        uniad_cfg.data.test.ann_file = args.ann_file
-    data_args = DataArguments(
-        data_path=args.conversations,
-        lazy_preprocess=True,
-        # nuScenes multi-frame cap; unused for single-frame CARLA parking (D4).
-        frames_upbound=32,
-    )
-    dataset = LLaVANuScenesDataset(
-        tokenizer,
-        data_args,
-        uniad_cfg.data.test,
-        llava_test_mode=True,
-        use_uniad_pth=False,
-    )
+        cfg.data.test.ann_file = args.ann_file
 
-    # Must process frames in scene order (UniAD is temporally stateful)
-    sampler = ContinuousSceneDistributedSampler(
-        dataset,
-        num_replicas=1,
-        rank=0,
-        shuffle=False,
-        drop_last=False,
-    )
-    collator = DataCollatorForLLaVANuScenesDataset(tokenizer=tokenizer, llava_test_mode=True)
-    loader = DataLoader(dataset, batch_size=1, sampler=sampler,
-                        num_workers=args.num_workers, collate_fn=collator)
+    print("[1/3] Building dataset ...")
+    dataset = build_dataset(cfg.data.test)
+    if args.max_samples is not None:
+        dataset.data_infos = dataset.data_infos[:args.max_samples]
+    # shuffle=False keeps frames in scene order — UniAD is temporally stateful, so the
+    # sequence must not be permuted (and frames must not be skipped; see below).
+    loader = build_dataloader(dataset, samples_per_gpu=1,
+                              workers_per_gpu=args.num_workers,
+                              dist=False, shuffle=False)
+    print(f"    {len(dataset)} frames")
 
-    skipped = 0
+    print("[2/3] Building UniAD + loading checkpoint ...")
+    cfg.model.train_cfg = None
+    model = build_model(cfg.model, test_cfg=cfg.get("test_cfg"))
+    load_checkpoint(model, args.checkpoint, map_location="cpu")
+    model = model.cuda().eval()
+
+    print("[3/3] Extracting ...")
     saved = 0
     with torch.no_grad():
         with torch.cuda.amp.autocast(dtype=torch.float16):
-            for batch in tqdm(loader, desc="Extracting UniAD features"):
-                sample_id = batch["id"][0] if isinstance(batch["id"], list) else batch["id"]
-                token = str(sample_id).removesuffix("_trajectory")
-                out_path = out_dir / f"{token}.pth"
+            for i, data in enumerate(tqdm(loader, desc="Extracting UniAD features")):
+                token = dataset.data_infos[i]["token"]
 
-                if out_path.exists():
-                    skipped += 1
-                    continue
+                # Same unwrap contract as projects/.../uniad/apis/test.py
+                data = remove_datacontainer(data)
+                data["img_metas"] = data["img_metas"][0]
+                data["img"] = data["img"][0]
+                data = move_data_to_device(data, "cuda")
 
-                uniad_data = batch.get("uniad_data")
-                if uniad_data is None:
-                    continue
-
-                # Move data to device
-                def _to_device(x):
-                    if isinstance(x, torch.Tensor):
-                        return x.to(device)
-                    if isinstance(x, dict):
-                        return {k: _to_device(v) for k, v in x.items()}
-                    if isinstance(x, list):
-                        return [_to_device(v) for v in x]
-                    return x
-
-                uniad_data = _to_device(uniad_data)
-                results_for_vlm = vision_tower(uniad_data)
-
-                # Move result to CPU before saving to avoid GPU OOM when accumulating
-                def _to_cpu(x):
-                    if isinstance(x, torch.Tensor):
-                        return x.cpu()
-                    if isinstance(x, dict):
-                        return {k: _to_cpu(v) for k, v in x.items()}
-                    if isinstance(x, list):
-                        return [_to_cpu(v) for v in x]
-                    return x
+                # forward_test returns (result, results_for_vlm) — the vision tower used
+                # exactly this call; we just skip the wrapper around it.
+                _result, results_for_vlm = model(return_loss=False, rescale=True, **data)
 
                 results_cpu = _to_cpu(results_for_vlm)
-                # Keep only the fields training reads (see
-                # llava_arch.encode_vision_tower_result), plus the decoded
-                # detections needed to build reasoning data. We still drop the
-                # big bev_embed (~41MB/frame). track_query_embeddings + img_feat
-                # are ~1.2MB/frame; the decoded boxes add only a few KB.
                 rt = results_cpu.get("result_track", {})
                 rs = results_cpu.get("result_seg", {})
 
-                # Decoded objects UniAD perceives this frame, as plain CPU tensors
-                # (so loading doesn't require mmdet3d box classes). track_bbox_results
-                # is [(boxes_3d, scores, labels, bbox_index, mask)]; boxes_3d.tensor
-                # is [N, 9] = ego-frame (x,y,z,w,l,h,yaw,vx,vy). None when no detections.
+                # Confirmed tracks. track_bbox_results is [(boxes_3d, scores, labels,
+                # bbox_index, mask)]; boxes_3d.tensor is [N,9] ego (x,y,z,w,l,h,yaw,vx,vy).
                 det = None
                 try:
                     tbr = rt.get("track_bbox_results")
                     if tbr:
                         boxes_3d, scores, labels = tbr[0][0], tbr[0][1], tbr[0][2]
                         box_t = boxes_3d.tensor if hasattr(boxes_3d, "tensor") else boxes_3d
-                        det = {
-                            "boxes": box_t.detach().cpu(),
-                            "scores": scores.detach().cpu(),
-                            "labels": labels.detach().cpu(),
-                        }
+                        det = {"boxes": box_t.detach().cpu(),
+                               "scores": scores.detach().cpu(),
+                               "labels": labels.detach().cpu()}
                 except Exception as e:
                     print(f"  warn: could not extract detections for {token}: {e}")
 
-                # Raw per-frame detections (boxes_3d_det, ~300 queries, pre-tracking) —
-                # denser than the confirmed tracks; lets us compare/feed raw vs tracked.
-                det_raw = None
-                try:
-                    if rt.get("boxes_3d_det") is not None:
-                        bt = rt["boxes_3d_det"]
-                        bt = bt.tensor if hasattr(bt, "tensor") else bt
-                        det_raw = {
-                            "boxes": bt.detach().cpu(),
-                            "scores": rt["scores_3d_det"].detach().cpu(),
-                            "labels": rt["labels_3d_det"].detach().cpu(),
-                        }
-                except Exception as e:
-                    print(f"  warn: no raw detections for {token}: {e}")
+                # Raw per-frame detections (pre-tracking, ~300 queries) — denser.
+                det_raw = _decode(rt, ("boxes_3d_det", "scores_3d_det", "labels_3d_det"),
+                                  token, "raw detections")
 
                 slim = {
                     "scene_token": results_cpu.get("scene_token"),
@@ -213,31 +212,35 @@ def main():
                     },
                     "planning_gt": results_cpu.get("planning_gt"),
                 }
-                torch.save(slim, out_path)
+                torch.save(slim, out_dir / f"{token}.pth")
                 saved += 1
 
-    print(f"\nDone. Saved {saved} new feature files, skipped {skipped} existing.")
+    print(f"\nDone. Saved {saved} feature files -> {out_dir}")
+    # NOTE: every frame is (re)processed. We deliberately do NOT skip existing files:
+    # UniAD carries temporal state across frames within a scene, so skipping a frame
+    # would feed the next one a stale prev_bev and silently corrupt its features.
 
-    # Update conversations.json with uniad_pth paths
-    print(f"Updating {args.conversations} with uniad_pth paths...")
-    with open(args.conversations) as f:
-        convs = json.load(f)
-
-    out_dir_abs = out_dir.resolve()
-    updated = 0
-    for entry in convs:
-        token = entry.get("sample_id") or entry.get("qa_id", "").removesuffix("_trajectory")
-        pth_path = out_dir_abs / f"{token}.pth"
-        if pth_path.exists():
-            entry["uniad_pth"] = str(pth_path)
-            updated += 1
-
-    with open(args.conversations, "w") as f:
-        json.dump(convs, f)
-
-    print(f"Updated {updated}/{len(convs)} conversations with uniad_pth paths.")
-    print(f"Ready for training. Run: bash scripts/train_carla_parking.sh")
+    if args.conversations and os.path.exists(args.conversations):
+        print(f"Updating {args.conversations} with uniad_pth paths...")
+        with open(args.conversations) as f:
+            convs = json.load(f)
+        out_abs = out_dir.resolve()
+        updated = 0
+        for entry in convs:
+            token = entry.get("sample_id") or entry.get("qa_id", "").removesuffix("_trajectory")
+            p = out_abs / f"{token}.pth"
+            if p.exists():
+                entry["uniad_pth"] = str(p)
+                updated += 1
+        with open(args.conversations, "w") as f:
+            json.dump(convs, f)
+        print(f"Updated {updated}/{len(convs)} conversations with uniad_pth paths.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

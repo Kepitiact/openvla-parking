@@ -26,7 +26,7 @@ SIF=/workspaces/s0002438/openvla.sif
 #   to the glibc-2.35-compatible one, not the newer host lib --nv injects (GLIBC_2.38
 #   mismatch). /.singularity.d/libs stays on the path for the host libcuda.
 srun singularity exec --nv \
-  --bind /workspaces/s0002438 \
+  --bind /workspaces/s0002438,/staging/short_range_perception \
   --pwd "$REPO/OpenDriveVLA" \
   --env PYTHONPATH="$REPO/OpenDriveVLA" \
   --env TRITON_CACHE_DIR="/tmp/triton_${SLURM_JOB_ID}" \
