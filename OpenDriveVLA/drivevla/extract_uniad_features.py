@@ -74,6 +74,17 @@ def main():
     model.eval()
     vision_tower = model.get_vision_tower()
 
+    # CRITICAL: OpenDriveVLA-0.5B was trained with `mm_tunable_parts` including the
+    # vision tower, so its checkpoint bakes the ORIGINAL nuScenes UniAD weights. The
+    # load_pretrained_model call above restores those over the CARLA-trained epoch_4
+    # that the tower loaded at build time, i.e. extraction would silently run nuScenes
+    # UniAD on CARLA images (near-field detection collapses). Force our checkpoint back
+    # into the UniAD backbone so the extracted features reflect the model we trained.
+    from mmcv.runner import load_checkpoint as _load_uniad_ckpt
+    _uniad_ckpt = os.environ.get("UNIAD_CKPT", "checkpoints/uniad_base_track_map.pth")
+    _load_uniad_ckpt(vision_tower.vision_tower.vision_model, _uniad_ckpt, map_location="cpu")
+    print(f"[fix] reloaded CARLA UniAD weights into vision tower from {_uniad_ckpt}")
+
     # Dataset (test mode, no uniad_pth — we're generating them)
     uniad_cfg = Config.fromfile(args.uniad_config)
     if args.ann_file:
@@ -171,6 +182,21 @@ def main():
                 except Exception as e:
                     print(f"  warn: could not extract detections for {token}: {e}")
 
+                # Raw per-frame detections (boxes_3d_det, ~300 queries, pre-tracking) —
+                # denser than the confirmed tracks; lets us compare/feed raw vs tracked.
+                det_raw = None
+                try:
+                    if rt.get("boxes_3d_det") is not None:
+                        bt = rt["boxes_3d_det"]
+                        bt = bt.tensor if hasattr(bt, "tensor") else bt
+                        det_raw = {
+                            "boxes": bt.detach().cpu(),
+                            "scores": rt["scores_3d_det"].detach().cpu(),
+                            "labels": rt["labels_3d_det"].detach().cpu(),
+                        }
+                except Exception as e:
+                    print(f"  warn: no raw detections for {token}: {e}")
+
                 slim = {
                     "scene_token": results_cpu.get("scene_token"),
                     "sample_token": results_cpu.get("sample_token"),
@@ -179,6 +205,7 @@ def main():
                         "img_feat_2D": rt.get("img_feat_2D"),
                         "track_gt_inds_to_embed_idx": rt.get("track_gt_inds_to_embed_idx"),
                         "detections": det,
+                        "detections_raw": det_raw,
                     },
                     "result_seg": {
                         "chosen_output_query_things": rs.get("chosen_output_query_things"),

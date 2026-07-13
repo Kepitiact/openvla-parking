@@ -63,6 +63,17 @@ def load_model_with_deepspeed(args, device):
         **llava_model_args
     )
 
+    # CRITICAL: OpenDriveVLA-0.5B was trained with `mm_tunable_parts` including the
+    # vision tower, so its checkpoint bakes the ORIGINAL nuScenes UniAD weights, which
+    # load_pretrained_model restores over the CARLA-trained checkpoint the tower loaded
+    # at build time. Without this reload, inference silently runs nuScenes UniAD on CARLA
+    # images and near-field detection collapses. Same fix as extract_uniad_features.py.
+    from mmcv.runner import load_checkpoint as _load_uniad_ckpt
+    _uniad_ckpt = os.environ.get("UNIAD_CKPT", "checkpoints/uniad_base_track_map.pth")
+    _load_uniad_ckpt(model.get_vision_tower().vision_tower.vision_model,
+                     _uniad_ckpt, map_location="cpu")
+    print(f"[fix] reloaded CARLA UniAD weights into vision tower from {_uniad_ckpt}")
+
     # DeepSpeed inference configuration
     ds_config = {
         "fp16": {"enabled": args.fp16},

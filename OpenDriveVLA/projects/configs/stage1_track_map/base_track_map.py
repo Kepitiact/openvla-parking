@@ -14,9 +14,9 @@ plugin = True
 plugin_dir = "projects/mmdet3d_plugin/"
 # If point cloud range is changed, the models should also change their point
 # cloud range accordingly
-point_cloud_range = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+point_cloud_range = [-25.6, -25.6, -5.0, 25.6, 25.6, 3.0]
 voxel_size = [0.2, 0.2, 8]
-patch_size = [102.4, 102.4]
+patch_size = [51.2, 51.2]
 img_norm_cfg = dict(mean=[103.530, 116.280, 123.675], std=[1.0, 1.0, 1.0], to_rgb=False)
 # For nuScenes we usually do 10-class detection
 class_names = [
@@ -232,7 +232,7 @@ model = dict(
         ),
         bbox_coder=dict(
             type="NMSFreeCoder",
-            post_center_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+            post_center_range=[-30.6, -30.6, -10.0, 30.6, 30.6, 10.0],
             pc_range=point_cloud_range,
             max_num=300,
             voxel_size=voxel_size,
