@@ -15,6 +15,7 @@
 
 from abc import ABC, abstractmethod
 
+import os
 import math
 import re
 import time
@@ -343,6 +344,54 @@ class LlavaMetaForCausalLM(ABC):
 
         return scene_feature, track_feature, map_feature
     
+    def build_reason_gate_mask(self, markers, attention_mask_2d, dtype):
+        """4D causal mask in which the TRAJECTORY tokens cannot see the PERCEPTION tokens.
+
+        `markers` is (B, L): each final position is either a text token id or one of the
+        SCENE/TRACK/MAP sentinels marking a spliced perception block.
+
+        The trajectory region is everything from <traj_start> onwards. Blocking its view of
+        the perception blocks means the model cannot copy waypoints out of the BEV features
+        directly; the information has to arrive via the reasoning tokens in between, which
+        the trajectory CAN still attend to. That is what makes the reasoning load-bearing
+        instead of decorative.
+
+        Note the reasoning block itself keeps full access to perception — we are gating the
+        trajectory, not starving the reasoner.
+        """
+        B, L = markers.shape
+        device = markers.device
+        min_val = torch.finfo(dtype).min
+
+        perception = ((markers == SCENE_TOKEN_INDEX)
+                      | (markers == TRACK_TOKEN_INDEX)
+                      | (markers == MAP_TOKEN_INDEX))                      # (B, L)
+
+        traj_start_id = getattr(self.config, "traj_start_token_id", None)
+        if traj_start_id is None:
+            raise ValueError(
+                "REASON_GATE=1 but config.traj_start_token_id is unset. Rebuild the "
+                "backbone with scripts/init_drivevla_qwen3b.py, which bakes the id in.")
+
+        is_traj = torch.zeros_like(perception)
+        hits = (markers == int(traj_start_id))
+        for b in range(B):
+            idx = hits[b].nonzero()
+            if idx.numel():
+                is_traj[b, int(idx[0, 0]):] = True                          # <traj_start> .. end
+
+        causal = torch.full((L, L), min_val, device=device, dtype=dtype).triu(diagonal=1)
+        mask = causal[None, None].expand(B, 1, L, L).clone()                # (B,1,L,L)
+
+        # query = trajectory position, key = perception position  -> forbidden
+        blocked = is_traj[:, :, None] & perception[:, None, :]              # (B,L,L)
+        mask.masked_fill_(blocked[:, None, :, :], min_val)
+
+        # keep the padding mask
+        pad = (attention_mask_2d == 0)[:, None, None, :]                    # (B,1,1,L)
+        mask.masked_fill_(pad, min_val)
+        return mask
+
     def prepare_inputs_labels_for_multimodal_uniad_vlm(self, input_ids, position_ids, attention_mask, past_key_values, labels, images, modalities=["image"], image_sizes=None, uniad_data=None, uniad_pth=None, qa_instance_ind=None):
         vision_tower = self.get_vision_tower()
 
@@ -530,6 +579,7 @@ class LlavaMetaForCausalLM(ABC):
 
         new_input_embeds = []
         new_labels = []
+        new_markers = []   # what each FINAL position is: a text token id, or a perception sentinel
         cur_image_idx = 0
         # breakpoint()
         # rank_print("Inserting Images embedding")
@@ -578,15 +628,25 @@ class LlavaMetaForCausalLM(ABC):
             cur_new_input_embeds = []
             cur_new_labels = []
             cur_image_idx = 0
+            # Parallel "marker" track: for every position in the FINAL sequence, what is
+            # it? Text keeps its token id; a spliced perception block is marked with its
+            # SCENE/TRACK/MAP sentinel. This is the only way to know, after splicing,
+            # which positions are perception and which are the trajectory — needed by the
+            # reason gate (see build_reason_gate_mask).
+            cur_new_markers = []
 
             for i in range(len(special_token_indices) - 1):
                 # Add text embeddings
                 cur_new_input_embeds.append(cur_input_embeds_no_special[i])
                 cur_new_labels.append(cur_labels_nospecial[i])
-                
+                cur_new_markers.append(cur_input_ids_nospecial[i])
+
                 if special_token_indices[i + 1] < cur_input_ids.shape[0]:
                     token_type = cur_input_ids[special_token_indices[i + 1]]
-                    
+
+                    def _mark(n, tt):
+                        return torch.full((n,), int(tt), device=cur_labels.device, dtype=cur_input_ids.dtype)
+
                     # Add corresponding feature based on token type
                     if token_type == IMAGE_TOKEN_INDEX:
                         if images is not None:
@@ -594,20 +654,25 @@ class LlavaMetaForCausalLM(ABC):
                             cur_image_idx += 1
                             cur_new_input_embeds.append(cur_image_features)
                             cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=cur_labels.device, dtype=cur_labels.dtype))
+                            cur_new_markers.append(_mark(cur_image_features.shape[0], IMAGE_TOKEN_INDEX))
                     elif token_type == SCENE_TOKEN_INDEX:
                         cur_new_input_embeds.append(scene_feature)
                         cur_new_labels.append(torch.full((scene_feature.shape[0],), IGNORE_INDEX, device=cur_labels.device, dtype=cur_labels.dtype))
+                        cur_new_markers.append(_mark(scene_feature.shape[0], SCENE_TOKEN_INDEX))
                     elif token_type == TRACK_TOKEN_INDEX:
                         if track_feature is not None:
                             cur_new_input_embeds.append(track_feature)
                             cur_new_labels.append(torch.full((track_feature.shape[0],), IGNORE_INDEX, device=cur_labels.device, dtype=cur_labels.dtype))
+                            cur_new_markers.append(_mark(track_feature.shape[0], TRACK_TOKEN_INDEX))
                     elif token_type == MAP_TOKEN_INDEX:
                         cur_new_input_embeds.append(map_feature)
                         cur_new_labels.append(torch.full((map_feature.shape[0],), IGNORE_INDEX, device=cur_labels.device, dtype=cur_labels.dtype))
+                        cur_new_markers.append(_mark(map_feature.shape[0], MAP_TOKEN_INDEX))
                     elif token_type == OBJECT_TOKEN_INDEX:
                         if qa_instance_track_embed_idx is not None:
                             cur_new_input_embeds.append(qa_instance_track_feature)
                             cur_new_labels.append(torch.full((qa_instance_track_feature.shape[0],), IGNORE_INDEX, device=cur_labels.device, dtype=cur_labels.dtype))
+                            cur_new_markers.append(_mark(qa_instance_track_feature.shape[0], OBJECT_TOKEN_INDEX))
 
             cur_new_input_embeds = [x.to(self.device) for x in cur_new_input_embeds]
 
@@ -617,6 +682,7 @@ class LlavaMetaForCausalLM(ABC):
 
             new_input_embeds.append(cur_new_input_embeds)
             new_labels.append(cur_new_labels)
+            new_markers.append(torch.cat(cur_new_markers))
 
         # Truncate sequences to max length as image embeddings can make the sequence longer
         tokenizer_model_max_length = getattr(self.config, "tokenizer_model_max_length", None)
@@ -667,6 +733,32 @@ class LlavaMetaForCausalLM(ABC):
         else:
             attention_mask = attention_mask.to(dtype=_attention_mask.dtype)
 
+
+        # ── REASON GATE (Step 6c) ────────────────────────────────────────────────
+        # Block the trajectory tokens from attending DIRECTLY to the perception tokens,
+        # so the only path from perception to trajectory runs THROUGH the reasoning block.
+        #
+        # Why it matters: otherwise the model can emit a fine-looking reasoning trace and
+        # then read the waypoints straight off ego-state/steer/gear -- the reasoning stays
+        # decorative and Step-8's causality gates fail by construction. With counterfactual
+        # training dropped, this mask is the ONLY mechanism forcing that mediation.
+        #
+        # Returned as a 4D mask: transformers consumes a 4D attention_mask verbatim as the
+        # causal mask, so no caller signature changes. Off unless REASON_GATE=1.
+        if os.environ.get("REASON_GATE", "0") == "1" and attention_mask is not None:
+            markers_padded = torch.zeros((batch_size, max_len), dtype=new_markers[0].dtype,
+                                         device=new_input_embeds.device)
+            pad_left = getattr(self.config, "tokenizer_padding_side", "right") == "left"
+            for i, m in enumerate(new_markers):
+                m = m[:tokenizer_model_max_length].to(new_input_embeds.device)
+                cur_len = m.shape[0]
+                if cur_len:
+                    if pad_left:
+                        markers_padded[i, -cur_len:] = m
+                    else:
+                        markers_padded[i, :cur_len] = m
+            attention_mask = self.build_reason_gate_mask(
+                markers_padded, attention_mask, new_input_embeds.dtype)
         if _position_ids is None:
             position_ids = None
         if getattr(self.config, "use_pos_skipping", False) and self.training:

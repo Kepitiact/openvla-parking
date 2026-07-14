@@ -158,6 +158,17 @@ def main():
     cfg.mm_vision_tower = "uniad_track_map"
     model.config.mm_vision_tower = "uniad_track_map"
 
+    # Token ids the model needs at runtime to locate the reasoning / trajectory blocks
+    # (for the reason-gate attention mask). Baked into the config so the forward pass
+    # never needs a tokenizer.
+    for name, tokstr in [("traj_start_token_id", DEFAULT_TRAJ_START_TOKEN),
+                         ("reason_start_token_id", DEFAULT_REASON_START_TOKEN),
+                         ("reason_end_token_id", DEFAULT_REASON_END_TOKEN)]:
+        tid = tok.convert_tokens_to_ids(tokstr)
+        setattr(cfg, name, tid)
+        setattr(model.config, name, tid)
+        print(f"      config.{name} = {tid}  ({tokstr})")
+
     print(f"[5/5] saving -> {out}  (stripping any vision_model.* weights)")
     out.mkdir(parents=True, exist_ok=True)
     sd = model.state_dict()
