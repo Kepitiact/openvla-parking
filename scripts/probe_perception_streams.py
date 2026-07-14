@@ -66,10 +66,14 @@ def stream_vectors(pth: dict) -> dict:
     return out
 
 
-def load(features_dir: str, raw_dir: str):
+def load(features_dir: str, raw_dir: str, stride: int = 1):
     files = sorted(glob.glob(os.path.join(features_dir, "*.pth")))
     if not files:
         raise SystemExit(f"no .pth under {features_dir}")
+    # The probe is EPISODE-limited, not frame-limited: what it needs is many episodes per
+    # weather class, and consecutive frames of one episode are near-duplicates that add
+    # almost nothing. Striding keeps every episode while cutting the 78 GB read by `stride`.
+    files = files[::stride]
 
     meta_cache: dict = {}
     X = collections.defaultdict(list)
@@ -120,9 +124,11 @@ def main():
     ap.add_argument("--features-dir", default="data_carla/processed/uniad_features")
     ap.add_argument("--raw-dir", default="data_carla/raw")
     ap.add_argument("--n-splits", type=int, default=5)
+    ap.add_argument("--stride", type=int, default=1,
+                    help="use every Nth frame (episodes are all still covered)")
     args = ap.parse_args()
 
-    X, weather, occupancy, groups = load(args.features_dir, args.raw_dir)
+    X, weather, occupancy, groups = load(args.features_dir, args.raw_dir, args.stride)
     n_ep = len(set(groups))
     print(f"{len(groups)} frames / {n_ep} episodes / {len(set(weather))} weather classes\n")
 
