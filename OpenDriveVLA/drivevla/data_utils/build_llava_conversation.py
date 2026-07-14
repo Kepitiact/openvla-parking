@@ -120,24 +120,51 @@ def process_traj_data(data, split, nusc):
 def generate_user_message(data_dict):
         
     """
-    Ego-States:
-        gt_ego_lcf_feat: [vx, vy, ?, ?, v_yaw (rad/s), ego_length, ego_width, v0 (vy from canbus), Kappa (steering)]
+    Ego-States. gt_ego_lcf_feat (built by scripts/generate_cached_nuscenes_info.py) is:
+        [0] fwd_v      forward velocity  (m/s, signed: negative while reversing)
+        [1] right_v    rightward velocity
+        [2] global_x   ego position in the MAP     <- deliberately NOT shown, see below
+        [3] global_y   ego position in the MAP     <- deliberately NOT shown
+        [4] yaw_rate   rad/s
+        [5] length     4.5 (constant)
+        [6] width      1.8 (constant)
+        [7] speed      |v|
+        [8] steer      normalized [-1, 1]
+
+    TWO BUGS WERE FIXED HERE:
+
+    1. VELOCITY ORDER. Everything the model reads or writes — the past trajectory, the
+       mission-goal slot, and the output waypoints — is (x=RIGHT, y=FORWARD), and the
+       system prompt says so. But lcf_feat stores (forward, right), and this function
+       printed it verbatim as "Velocity (vx,vy)". So `x` meant "right" everywhere except
+       velocity, where it meant "forward".
+       Physics check on a reversing frame: measured velocity is forward=-1.80, right=+0.53
+       m/s, and the first waypoint (0.5 s later) is (right=+0.17, forward=-0.92).
+       Reported as (right, forward) -> (+0.27, -0.90): matches the waypoint.
+       Reported as (forward, right) -> (-0.90, +0.27): contradicts it — the prompt told the
+       model it was drifting LEFT while the trajectory it had to emit went BACKWARD.
+
+    2. "Can Bus" WAS THE EGO'S ABSOLUTE MAP POSITION. lcf_feat[2:4] is global (x, y), and
+       it was being printed as "Can Bus: (287.06, 199.79)". Every episode is in ONE lot, so
+       an absolute coordinate is close to a lookup key: the obstacle layout of a fixed lot
+       is a FUNCTION of position, which lets the model recall what is around it instead of
+       looking at the perception tokens — precisely the shortcut this project exists to
+       remove. It is also useless at deployment (meaningless in a new lot). Dropped; the
+       acceleration below is real and stays.
     """
     ego_message = ""
-    vx = data_dict['gt_ego_lcf_feat'][0]*0.5
-    vy = data_dict['gt_ego_lcf_feat'][1]*0.5
+    fwd_v = data_dict['gt_ego_lcf_feat'][0] * 0.5
+    right_v = data_dict['gt_ego_lcf_feat'][1] * 0.5
     v_yaw = data_dict['gt_ego_lcf_feat'][4]
+    # his_diff is already (right, forward) — consistent with the trajectory convention.
     ax = data_dict['gt_ego_his_diff'][-1, 0] - data_dict['gt_ego_his_diff'][-2, 0]
     ay = data_dict['gt_ego_his_diff'][-1, 1] - data_dict['gt_ego_his_diff'][-2, 1]
-    cx = data_dict['gt_ego_lcf_feat'][2]
-    cy = data_dict['gt_ego_lcf_feat'][3]
-    vhead = data_dict['gt_ego_lcf_feat'][7]*0.5
+    vhead = data_dict['gt_ego_lcf_feat'][7] * 0.5
     steeling = data_dict['gt_ego_lcf_feat'][8]
-    # ego_message += f"Ego states:"
-    ego_message += f"- Velocity (vx,vy): ({vx:.2f},{vy:.2f})"
+    # (x, y) = (right, forward), the same convention as the waypoints.
+    ego_message += f"- Velocity (vx,vy): ({right_v:.2f},{fwd_v:.2f})"
     ego_message += f" - Heading Angular Velocity (v_yaw): ({v_yaw:.2f})"
     ego_message += f" - Acceleration (ax,ay): ({ax:.2f},{ay:.2f})"
-    ego_message += f" - Can Bus: ({cx:.2f},{cy:.2f})"
     ego_message += f" - Heading Speed: ({vhead:.2f})"
     ego_message += f" - Steering: ({steeling:.2f})"
 
