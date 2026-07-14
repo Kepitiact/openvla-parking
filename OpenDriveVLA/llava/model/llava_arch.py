@@ -363,17 +363,25 @@ class LlavaMetaForCausalLM(ABC):
         device = markers.device
         min_val = torch.finfo(dtype).min
 
-        # WHICH streams to gate. The gate should block exactly what the reasoning is
-        # supposed to MEDIATE — and nothing more.
-        #   track  the detected objects. This is what the reasoning actually cites, so it
-        #          MUST flow through the reasoning. Always gated.
-        #   map    semantic layout; the reasoning can carry it. Gated by default.
-        #   scene  the raw 6-camera image features. Our reasoning NEVER describes images
-        #          (no curbs, free space, lane markings), so gating it would simply destroy
-        #          information the reasoning cannot relay. NOT gated by default.
-        # REASON_GATE=1 -> "track,map"; or name streams explicitly, e.g. "track,map,scene".
+        # WHICH streams to gate. The rule: gate a stream ONLY if the reasoning actually
+        # carries that stream's information. Gating a stream the reasoning cannot express
+        # does not force mediation — it simply DESTROYS the information.
+        #
+        #   track  the decoded objects. The reasoning cites exactly these (bay flanks, the
+        #          car ahead capping the swing), so object information must route through
+        #          it. GATED BY DEFAULT — this is the causal claim we are testing.
+        #   map    lane/lot geometry. The reasoning says NOTHING about the map: the slot it
+        #          talks about comes from the COMMAND, not from these tokens. Gating it
+        #          would delete map information with nothing to relay it. Not gated.
+        #          (Also unverified: uniad_stage1_metrics scores detection only, so we have
+        #          no evidence the map head learned anything at all.)
+        #   scene  the raw 6-camera image features. The reasoning never describes images —
+        #          no curbs, no free space, no lane markings. Same argument. Not gated.
+        #
+        # REASON_GATE=1 -> "track". Name streams explicitly to widen it, e.g.
+        # "track,map,scene" for the strict A/B once the reasoning can actually carry them.
         spec = os.environ.get("REASON_GATE", "0")
-        streams = {"track", "map"} if spec == "1" else {
+        streams = {"track"} if spec == "1" else {
             s.strip() for s in spec.split(",") if s.strip() and s not in ("0", "1")}
         sentinels = []
         if "track" in streams:
