@@ -24,4 +24,7 @@ python scripts/generate_cached_nuscenes_info.py
 echo "=== [3/3] Conversations (per-frame token refs; content filled at train time) ==="
 python scripts/build_carla_conversations.py
 
-echo "=== Dataset build complete. Next: bash run_pipeline.sh ==="
+echo "=== Dataset build complete. ==="
+echo "Next: extract UniAD features (OpenDriveVLA/scripts/extract_carla_features.sh,"
+echo "      needs UNIAD_CKPT=<trained uniad ckpt>), then train."
+echo "(The old DAgger loop lives in dagger/ and is currently broken -- see dagger/README.md.)"

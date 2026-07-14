@@ -29,6 +29,13 @@ DEFAULT_TRACK_END_TOKEN = "<track_end>"
 DEFAULT_TRAJ_START_TOKEN="<traj_start>"
 DEFAULT_TRAJ_END_TOKEN="<traj_end>"
 
+# Reasoning block. The assistant emits its reasoning BEFORE the trajectory, so the
+# trajectory is decoded conditioned on it. Must stay byte-identical to
+# reasoning_data_gen/schema.py (REASON_START / REASON_END) — that module renders the
+# training targets, this one is what the model sees.
+DEFAULT_REASON_START_TOKEN="<reason_start>"
+DEFAULT_REASON_END_TOKEN="<reason_end>"
+
 # DEFAULT_OBJ_START_TOKEN="<obj_start>"
 # DEFAULT_OBJ_END_TOKEN="<obj_end>"
 

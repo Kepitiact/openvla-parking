@@ -17,8 +17,54 @@ from llava.constants import (
     DEFAULT_MAP_END_TOKEN,
     DEFAULT_TRACK_START_TOKEN,
     DEFAULT_TRACK_END_TOKEN,
-    DEFAULT_TRAJ_TOKEN
+    DEFAULT_TRAJ_TOKEN,
+    DEFAULT_REASON_START_TOKEN,
+    DEFAULT_REASON_END_TOKEN,
 )
+
+
+# ── Reasoning traces (Step 5) ────────────────────────────────────────────────
+# The assistant turn becomes:
+#   <reason_start>{trace}<reason_end><traj_start>[(x,y,h),...]<traj_end>
+# so the trajectory is decoded CONDITIONED on the reasoning. Byte-identical to
+# reasoning_data_gen.schema.render_assistant_turn (that module produced these traces).
+#
+# Enabled purely by env, so training with/without reasoning needs no code change:
+#   REASONING_TRACES=<...>/reasoning/<version>/traces.jsonl
+# Unset -> the assistant turn is trajectory-only, exactly as before.
+_REASONING_TRACES = None
+
+
+def _reasoning_traces():
+    global _REASONING_TRACES
+    if _REASONING_TRACES is None:
+        _REASONING_TRACES = {}
+        path = os.environ.get("REASONING_TRACES", "")
+        if path and os.path.exists(path):
+            with open(path) as f:
+                for line in f:
+                    rec = json.loads(line)
+                    # Only factual traces train the base behaviour. Counterfactual pairs
+                    # are a separate stream (they need a matching synthetic perception
+                    # token, which does not exist yet — feeding them in here would teach
+                    # the model to stop for obstacles it cannot see).
+                    if rec.get("role", "factual") == "factual" and rec.get("trace"):
+                        _REASONING_TRACES[rec["token"]] = rec["trace"]
+            rank0_print(f"[reasoning] loaded {len(_REASONING_TRACES)} traces from {path}")
+        elif path:
+            rank0_print(f"[reasoning] WARNING: REASONING_TRACES={path} does not exist; "
+                        "training trajectory-only.")
+    return _REASONING_TRACES
+
+
+def build_answer(traj_message: str, sample_token: str) -> str:
+    """The assistant turn. Prepends the reasoning block when a trace exists for this
+    frame; otherwise emits the trajectory alone (unchanged legacy behaviour)."""
+    trace = _reasoning_traces().get(sample_token)
+    traj = f"{DEFAULT_TRAJ_START_TOKEN}{traj_message}{DEFAULT_TRAJ_END_TOKEN}"
+    if not trace:
+        return traj
+    return f"{DEFAULT_REASON_START_TOKEN}{trace}{DEFAULT_REASON_END_TOKEN}{traj}"
 
 def get_sample_split(nusc: NuScenes, sample_token: str) -> str:
     """
@@ -220,6 +266,6 @@ def build_llava_conversation(data_sample, cached_nuscenes_data):
         f"Mission goal: {cmd_message}\n"
         f"Planning trajectory: {DEFAULT_TRAJ_TOKEN}"
     )
-    data_sample['conversations'][1]['value'] = f"{DEFAULT_TRAJ_START_TOKEN}{traj_message}{DEFAULT_TRAJ_END_TOKEN}"
-        
+    data_sample['conversations'][1]['value'] = build_answer(traj_message, sample_token)
+
     return data_sample
