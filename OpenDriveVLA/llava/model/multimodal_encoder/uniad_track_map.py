@@ -103,12 +103,21 @@ class UniadTrackMapModel(PreTrainedModel):
 UNIAD_TRAIN_CONFIG = "projects/configs/stage1_track_map/carla_parking_stage1.py"
 _GEOMETRY_KEYS = ("point_cloud_range", "voxel_size", "patch_size", "bev_h_", "bev_w_")
 
+# Config paths are relative to the OpenDriveVLA root, NOT to the caller's cwd. Resolving
+# against __file__ means the tower can be built from anywhere (repo root, a script, a
+# notebook) instead of only from inside OpenDriveVLA/.
+_ODV_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__)))))
+
+
+def _resolve_cfg_path(path: str) -> str:
+    return path if osp.isabs(path) else osp.join(_ODV_ROOT, path)
+
 
 def resolve_uniad_config(vision_tower_cfg=None) -> str:
     """Which UniAD config the vision tower should build from. Explicit at the call
     site, in precedence order: caller attr -> UNIAD_CONFIG env -> the training config."""
     cfg = getattr(vision_tower_cfg, "uniad_config", None) if vision_tower_cfg else None
-    return cfg or os.environ.get("UNIAD_CONFIG") or UNIAD_TRAIN_CONFIG
+    return _resolve_cfg_path(cfg or os.environ.get("UNIAD_CONFIG") or UNIAD_TRAIN_CONFIG)
 
 
 # Configs whose geometry MUST agree with the training config. point_cloud_range is
@@ -133,10 +142,11 @@ def assert_geometry_matches_training(cfg, cfg_path: str) -> None:
     A wrong point_cloud_range does not raise — it quietly produces garbage detections
     (near-field recall went 1.00 -> 0.04 and nobody noticed). Fail loudly instead.
     """
-    train = Config.fromfile(UNIAD_TRAIN_CONFIG)
+    train = Config.fromfile(_resolve_cfg_path(UNIAD_TRAIN_CONFIG))
 
     to_check = [(cfg_path, cfg)]
     for p in _MUST_AGREE:
+        p = _resolve_cfg_path(p)
         if os.path.exists(p) and os.path.abspath(p) != os.path.abspath(cfg_path):
             try:
                 to_check.append((p, Config.fromfile(p)))
