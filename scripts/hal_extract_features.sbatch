@@ -5,9 +5,12 @@
 # so the baked-nuScenes-weights bug cannot recur. UNIAD_CKPT is REQUIRED (never defaulted:
 # `uniad_base_track_map.pth` once named two different models).
 #
-# Submit (arg1 = infos pkl, arg2 = output dir):
+# Submit (arg1 = infos pkl, arg2 = output dir).
+# NB the asymmetry, and it is not a typo:
+#   infos  live in the REPO      (/workspaces/.../data_carla/processed) -- ~5 GB, fine there
+#   output goes to STAGING       (78 GB would blow the ~100 GB workspace quota)
 #   sbatch scripts/hal_extract_features.sbatch \
-#     /staging/short_range_perception/s0002438/openvla_parking/data_carla/processed/parking_infos_train.pkl \
+#     /workspaces/s0002438/openvla-parking/data_carla/processed/parking_infos_train.pkl \
 #     /staging/short_range_perception/s0002438/openvla_parking/data_carla/processed/uniad_features
 #
 # SIZE: 1.27 MB/frame -> train 61,659 = 78 GB, val 9,454 = 12 GB. This MUST land on

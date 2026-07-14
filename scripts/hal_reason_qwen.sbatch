@@ -3,17 +3,16 @@
 # the Singularity container. --teacher qwen is fixed here; pass --source gt (GT-grounded
 # bridge pass) OR --source uniad (real perception; also pass --uniad-features-dir).
 #
-# Submit from anywhere on HAL (args pass through to run_generate):
-#   # GT-grounded pass:
+# Submit from anywhere on HAL (args pass through to run_generate).
+# WATCH THE PATHS -- they are NOT all on the same filesystem, and a wrong one dies instantly:
+#   --infos                the infos pkls live in the REPO   (/workspaces/.../data_carla/processed)
+#   --uniad-features-dir   the 78 GB of features are on STAGING
+#   --out                  generated data MUST go to STAGING (workspace quota kills running jobs)
 #   sbatch scripts/hal_reason_qwen.sbatch \
-#     --source gt \
-#     --infos  <staging>/data_carla/processed/parking_infos_train.pkl \
-#     --out    <staging>/data_carla/processed/reasoning/v1_qwen_gt --limit 200
-#   # UniAD-grounded pass (after extract_uniad_features.py has written the .pth dir):
-#   sbatch scripts/hal_reason_qwen.sbatch \
-#     --source uniad --uniad-features-dir <staging>/data_carla/processed/uniad_features \
-#     --infos  <staging>/data_carla/processed/parking_infos_train.pkl \
-#     --out    <staging>/data_carla/processed/reasoning/v2_qwen_uniad
+#     --source uniad \
+#     --uniad-features-dir /staging/short_range_perception/s0002438/openvla_parking/data_carla/processed/uniad_features \
+#     --infos /workspaces/s0002438/openvla-parking/data_carla/processed/parking_infos_train.pkl \
+#     --out   /staging/short_range_perception/s0002438/openvla_parking/data_carla/processed/reasoning/v1_uniad_epoch6
 # Watch:
 #   squeue --me ; tail -f /workspaces/s0002438/openvla-parking/reason_qwen_<jobid>.log
 #SBATCH --job-name=reason_qwen
