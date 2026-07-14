@@ -35,6 +35,7 @@ SIF=/workspaces/s0002438/openvla.sif
 STAGING=/staging/short_range_perception/s0002438/openvla_parking
 PROC=$REPO/data_carla/processed
 FEATS=$STAGING/data_carla/processed/uniad_features
+FEATS_VAL=$STAGING/data_carla/processed/uniad_features_val
 
 STAMP_ONLY=0
 [ "${1:-}" = "--stamp-only" ] && STAMP_ONLY=1
@@ -58,18 +59,27 @@ if [ "$STAMP_ONLY" -eq 0 ]; then
       --version v1.0-carla \
       --output "$PROC/cached_parking_info.pkl"
 
-  # 2. the training index.
-  echo "[2/2] carla_conversations.json ..."
+  # 2. the training/eval indices -- SEPARATE FILES, one per split.
+  #    They must NOT be one combined file: the dataset takes the conversation list
+  #    verbatim when use_uniad_pth is set (nuscenes_llava_dataset.py:185), so a combined
+  #    train+val index (71,113 = 61,659 + 9,454) gets trained on end to end. Every eval
+  #    number afterwards would be measured on frames the model had memorised, and nothing
+  #    would report it. train_drivevla now refuses any entry not marked split=="train".
+  echo "[2/2] carla_conversations_{train,val}.json ..."
   run python scripts/build_carla_conversations.py \
-      --infos "$PROC/parking_infos_temporal.pkl" \
-      --out "$PROC/carla_conversations.json"
+      --infos "$PROC/parking_infos_train.pkl" \
+      --out "$PROC/carla_conversations_train.json" --split train
+  run python scripts/build_carla_conversations.py \
+      --infos "$PROC/parking_infos_val.pkl" \
+      --out "$PROC/carla_conversations_val.json" --split val
 fi
 
-# 3. Stamp uniad_pth into the conversations. The extraction skips this when the
-#    conversations file does not exist yet (which it didn't), so do it here.
-#    Safe to re-run; only stamps tokens whose feature file actually exists.
-echo "[stamp] pointing conversations at $FEATS ..."
-run python - "$PROC/carla_conversations.json" "$FEATS" <<'PY'
+# 3. Stamp uniad_pth into each index, from its OWN feature dir. Safe to re-run; only
+#    stamps tokens whose feature file actually exists. Re-run with --stamp-only once the
+#    val extraction lands.
+stamp() {
+  echo "[stamp] $1  <-  $2"
+  run python - "$1" "$2" <<'PY'
 import json, os, sys
 conv_path, feat_dir = sys.argv[1], sys.argv[2]
 with open(conv_path) as f:
@@ -84,9 +94,14 @@ for e in convs:
 with open(conv_path, "w") as f:
     json.dump(convs, f)
 print(f"  stamped {hit}/{len(convs)} conversations with uniad_pth")
-if hit == 0:
-    print("  WARNING: no features found yet -- re-run with --stamp-only after extraction.")
+if hit < len(convs):
+    print(f"  INCOMPLETE: {len(convs)-hit} frames have no feature file. Training hard-fails "
+          f"on this; re-run --stamp-only once that split's extraction has finished.")
 PY
+}
+
+stamp "$PROC/carla_conversations_train.json" "$FEATS"
+stamp "$PROC/carla_conversations_val.json"   "$FEATS_VAL"
 
 echo "[prep] done."
-ls -lh "$PROC/cached_parking_info.pkl" "$PROC/carla_conversations.json" 2>/dev/null || true
+ls -lh "$PROC/cached_parking_info.pkl" "$PROC"/carla_conversations_*.json 2>/dev/null || true

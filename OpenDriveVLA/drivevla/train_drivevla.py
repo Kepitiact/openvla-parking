@@ -350,6 +350,21 @@ def main():
             "  cd OpenDriveVLA && bash scripts/extract_carla_features.sh"
         )
 
+    # TRAIN/VAL LEAK GUARD. The dataset does NOT filter: with use_uniad_pth it takes the
+    # conversation list verbatim (nuscenes_llava_dataset.py:185), so whatever is in this
+    # file gets trained on. The old combined index held train+val (71,113 = 61,659 + 9,454)
+    # and would have been trained on end to end -- inflating every eval number afterwards,
+    # with nothing anywhere reporting it. Refuse anything not explicitly marked train.
+    not_train = sum(1 for c in convs_check if c.get("split") != "train")
+    if not_train:
+        raise RuntimeError(
+            f"{not_train}/{len(convs_check)} conversations are not split=='train' "
+            f"({args.conversations}).\nTraining on val frames silently inflates every "
+            "later eval number. Rebuild the split indices:\n"
+            "  python scripts/build_carla_conversations.py --infos <...>_train.pkl "
+            "--out <...>_train.json --split train"
+        )
+
     dtype = torch.bfloat16 if args.bf16 else torch.float16
 
     # Load model (same as inference)

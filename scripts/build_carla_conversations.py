@@ -21,6 +21,12 @@ def main():
     ap = argparse.ArgumentParser(description="Build token-only carla_conversations.json.")
     ap.add_argument("--infos", default=str(paths.INFOS_PKL))
     ap.add_argument("--out", default=str(paths.CONVERSATIONS))
+    # Stamped into every entry, and train_drivevla REFUSES to train on anything that is not
+    # "train". The dataset does not filter -- with use_uniad_pth it takes the conversation
+    # list verbatim (nuscenes_llava_dataset.py:185) -- so a combined train+val index would
+    # be trained on end to end, silently, and every eval number afterwards would be a lie.
+    ap.add_argument("--split", required=True, choices=["train", "val"],
+                    help="which infos this index covers; guarded at train time")
     args = ap.parse_args()
 
     with open(args.infos, "rb") as f:
@@ -31,6 +37,7 @@ def main():
         {
             "qa_id": f"{info['token']}_trajectory",
             "sample_id": info["token"],
+            "split": args.split,
             "conversations": [
                 {"from": "human", "value": ""},
                 {"from": "gpt", "value": ""},
@@ -41,7 +48,7 @@ def main():
 
     with open(args.out, "w") as f:
         json.dump(convs, f)
-    print(f"Wrote {len(convs)} conversations to {args.out}")
+    print(f"Wrote {len(convs)} {args.split} conversations to {args.out}")
 
 
 if __name__ == "__main__":

@@ -80,7 +80,7 @@ srun singularity exec --nv \
     drivevla/train_drivevla.py \
       --model-path "$MODEL" \
       --stage "$STAGE" \
-      --conversations "$PROC/carla_conversations.json" \
+      --conversations "$PROC/carla_conversations_train.json" \
       --output-dir "$OUT" \
       --num-epochs "$EPOCHS" \
       --bf16 --distributed \
