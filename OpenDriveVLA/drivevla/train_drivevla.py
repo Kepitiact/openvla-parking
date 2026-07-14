@@ -121,6 +121,43 @@ def apply_trainable_groups(base, groups):
     return n
 
 
+def freeze_pretrained_embedding_rows(base, base_vocab_size, log=None):
+    """Train ONLY the newly-added token rows; freeze the 151k pretrained ones.
+
+    Unfreezing `embed_tokens` makes the WHOLE 151687 x 2048 matrix trainable — 311M
+    params. Training all of it on 71k narrow parking traces drags every token's embedding
+    toward parking-speak (and Qwen2.5 ties lm_head to embed_tokens, so the OUTPUT side
+    drifts too). That is catastrophic forgetting, and it is unnecessary: the only rows
+    that need to learn anything are the ~22 we appended, led by <reason_start>/<reason_end>,
+    which are mean-initialised and carry no meaning yet.
+
+    A gradient hook zeroes the gradient of every pre-existing row, so the optimizer can
+    only move the new ones.
+    """
+    emb = base.get_input_embeddings()
+    if emb is None or base_vocab_size is None:
+        return 0
+    w = emb.weight
+    if not w.requires_grad:
+        return 0
+
+    n_new = w.shape[0] - base_vocab_size
+    if n_new <= 0:
+        return 0
+
+    def _zero_old_rows(grad):
+        grad = grad.clone()
+        grad[:base_vocab_size] = 0
+        return grad
+
+    w.register_hook(_zero_old_rows)
+    if log:
+        log.info(f"Embeddings: freezing rows 0..{base_vocab_size - 1}; training only the "
+                 f"{n_new} new rows ({n_new * w.shape[1] / 1e6:.2f}M params instead of "
+                 f"{w.numel() / 1e6:.0f}M)")
+    return n_new
+
+
 def setup_logger(out_dir, is_main):
     """Leveled logger -> stdout + checkpoints/<run>/train.log (B5)."""
     log = logging.getLogger("train_drivevla")
@@ -373,6 +410,16 @@ def main():
     # Unfreeze the selected non-LoRA groups (B7).
     n_unfroze = apply_trainable_groups(base, groups)
     log.info(f"Trainable groups {groups}: unfroze {n_unfroze} param tensors")
+
+    # ...but "embeddings" must NOT mean "all 151k rows". Only the new tokens learn.
+    if "embeddings" in groups:
+        base_vocab = getattr(model.config, "base_vocab_size", None)
+        if base_vocab is None:
+            raise ValueError(
+                "Trainable group 'embeddings' requires config.base_vocab_size so the "
+                "pretrained rows can be frozen. Rebuild the backbone with "
+                "scripts/init_drivevla_qwen3b.py, which records it.")
+        freeze_pretrained_embedding_rows(base, base_vocab, log)
 
     # The reasoning tokens are useless if their embeddings are frozen: they are NEW rows
     # with no learned meaning. Fail loudly rather than train a model that can never open

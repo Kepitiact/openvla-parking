@@ -161,6 +161,14 @@ def main():
     # Token ids the model needs at runtime to locate the reasoning / trajectory blocks
     # (for the reason-gate attention mask). Baked into the config so the forward pass
     # never needs a tokenizer.
+    # The vocab size BEFORE we added our tokens. Training uses this to freeze every
+    # pre-existing embedding row and train ONLY the new ones -- otherwise the whole
+    # 151k x 2048 matrix (311M params) drifts toward parking-speak and the model forgets
+    # how to be a language model (and lm_head is tied, so the output side drifts too).
+    cfg.base_vocab_size = before
+    model.config.base_vocab_size = before
+    print(f"      config.base_vocab_size = {before}  (rows {before}..{len(tok)-1} are NEW and trainable)")
+
     for name, tokstr in [("traj_start_token_id", DEFAULT_TRAJ_START_TOKEN),
                          ("reason_start_token_id", DEFAULT_REASON_START_TOKEN),
                          ("reason_end_token_id", DEFAULT_REASON_END_TOKEN)]:
