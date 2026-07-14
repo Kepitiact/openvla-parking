@@ -190,6 +190,8 @@ class QwenVerbalizer(Verbalizer):
             f"Decision: {fact.decision}\n"
             f"Grounding (use only these):\n{grounding_block}\n"
             f"Entities you may name: {allowed}\n"
+            "Speak strictly in the first person (I, my). Never call yourself 'the car' or "
+            "'the vehicle' — the guard reads those words as obstacle mentions.\n"
             "Write the reasoning:"
         )
         return [{"role": "system", "content": QWEN_SYSTEM_PROMPT},
@@ -197,14 +199,21 @@ class QwenVerbalizer(Verbalizer):
 
     def verbalize(self, fact: FactRecord) -> str:
         messages = self.build_messages(fact)
+        rejected = []   # (candidate, problems) — surfaced on failure, or a batch job on
+                        # HAL dies with an opaque error and no way to see WHY
         for _ in range(self.max_retries):
             for cand in self._generate(messages, self.n_paraphrases):
                 cand = cand.strip().strip('"')
-                if cand and not find_hallucinations(cand, fact):
+                if not cand:
+                    continue
+                problems = find_hallucinations(cand, fact)
+                if not problems:
                     return cand
+                rejected.append((cand, problems))
+        detail = "\n".join(f"  {p} <- {c!r}" for c, p in rejected[-4:])
         raise RuntimeError(
-            f"QwenVerbalizer could not produce a hallucination-free trace for "
-            f"decision={fact.decision!r} after {self.max_retries} rounds."
+            f"QwenVerbalizer: no hallucination-free trace for decision="
+            f"{fact.decision!r} after {self.max_retries} rounds. Last rejects:\n{detail}"
         )
 
     # -- backends (lazy; not run in Step 0) -----------------------------------
@@ -235,7 +244,11 @@ class QwenVerbalizer(Verbalizer):
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
             self._tok = AutoTokenizer.from_pretrained(self.model_path)
-            kwargs = dict(device_map="auto", torch_dtype=torch.float16)
+            # fp16 only where it exists: CPU matmul has no Half kernels
+            # ("addmm_impl_cpu_ not implemented for 'Half'"), so a CPU run (validation,
+            # CI) needs fp32 while GPU runs keep fp16.
+            dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+            kwargs = dict(device_map="auto", torch_dtype=dtype)
             if self.load_4bit:  # fits Qwen2.5-32B on a single 40 GB A100
                 from transformers import BitsAndBytesConfig
                 kwargs["quantization_config"] = BitsAndBytesConfig(

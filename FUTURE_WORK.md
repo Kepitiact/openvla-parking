@@ -73,6 +73,23 @@ L2 + ablation sensitivity.
 
 ---
 
+## 3b. Reason gate at inference time (known limitation)
+
+The gate is a TRAINING-time mechanism. At `generate()` time,
+`prepare_inputs_labels_for_multimodal_uniad_vlm` runs once on the prompt — before any
+`<traj_start>` has been generated — so `is_traj` is all-False and the mask degenerates to
+plain causal: **decoding is not gated**. Newly generated trajectory tokens can attend to
+the cached perception keys.
+
+Why this is acceptable for v1: the weights were trained with the direct
+perception→trajectory path masked, so the model never *learned* to read perception from
+trajectory positions — the information flow it learned routes through the reasoning
+states. But it is a train/infer attention mismatch, and the strict version (masking
+per-step during decode, via a custom attention processor or per-step 4D masks over the KV
+cache) should be built before the Step-8 causality numbers are published.
+
+**Trigger:** before running the final Step-8 ablation suite.
+
 ## 4. Colour / appearance in the reasoning
 
 The model DOES see colour: `<SCENE>` is the 6-camera RGB backbone features
