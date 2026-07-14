@@ -68,6 +68,11 @@ def parse_args():
     ap.add_argument("--distributed", action="store_true", default=False,
                     help="Use HuggingFace Accelerate (DDP + framework-managed mixed precision). "
                          "Auto-enabled when launched under torchrun (WORLD_SIZE>1).")
+    ap.add_argument("--stage", choices=["align", "finetune"], default=None,
+                    help="Staged training (Step 7). 'align': LLM frozen, no LoRA -- only "
+                         "projectors + the new reasoning-token embeddings train, so UniAD's "
+                         "features learn to land in Qwen's residual stream first. "
+                         "'finetune': add LoRA on the attention. Overrides --trainable-groups.")
     ap.add_argument("--trainable-groups", default="projectors",
                     help="Comma-separated non-LoRA groups to unfreeze: projectors,uniad,heads,llm. "
                          "Default 'projectors' reproduces the original behaviour.")
@@ -82,6 +87,22 @@ TRAINABLE_GROUPS = {
     "uniad": ("uniad",),               # UniAD perception backbone
     "heads": ("lm_head", "embed_out"), # output heads
     "llm": ("model.layers",),          # full LLM fine-tune (in addition to LoRA)
+    # The token embedding matrix. REQUIRED whenever the reasoning tokens are in play:
+    # <reason_start>/<reason_end> are NEW rows, mean-initialised by
+    # scripts/init_drivevla_qwen3b.py, i.e. they carry no learned meaning yet. Leave this
+    # frozen and the model can never learn to open or close its own reasoning block.
+    # (Qwen2.5 ties lm_head to embed_tokens, so this trains the output side too.)
+    "embeddings": ("embed_tokens",),
+}
+
+# Staged training (Step 7).
+#   align    — teach UniAD's BEV features to "speak Qwen". LLM frozen (no LoRA); only the
+#              projectors and the new embedding rows move. Cheap, stabilises the residual
+#              stream before any LLM weights are touched.
+#   finetune — add LoRA on the LLM attention; projectors + embeddings keep training.
+STAGES = {
+    "align":    dict(groups=["projectors", "embeddings"], lora=False),
+    "finetune": dict(groups=["projectors", "embeddings"], lora=True),
 }
 
 
@@ -316,26 +337,57 @@ def main():
     for param in model.parameters():
         param.requires_grad = False
 
-    # Apply LoRA to Qwen2 attention projection layers only
-    target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
-    if args.lora_mlp:
-        target_modules += ["gate_proj", "up_proj", "down_proj"]
-    lora_cfg = LoraConfig(
-        r=args.lora_rank,
-        lora_alpha=args.lora_alpha,
-        target_modules=target_modules,
-        lora_dropout=0.05,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
-    model = get_peft_model(model, lora_cfg)
+    # Staged training (Step 7). --stage overrides --trainable-groups and decides whether
+    # the LLM is touched at all:
+    #   align    -> LLM frozen, NO LoRA. Only projectors + the new token embeddings move,
+    #               so UniAD's features learn to land in Qwen's residual stream before any
+    #               LLM weight is perturbed.
+    #   finetune -> LoRA on the attention, projectors + embeddings still training.
+    if args.stage:
+        stage_cfg = STAGES[args.stage]
+        groups = list(stage_cfg["groups"])
+        use_lora = stage_cfg["lora"]
+        log.info(f"Stage '{args.stage}': groups={groups}, lora={use_lora}")
+    else:
+        groups = [g.strip() for g in args.trainable_groups.split(",") if g.strip()]
+        use_lora = True
 
-    # Unfreeze the selected non-LoRA groups (B7). Default 'projectors' reproduces
-    # the original mm_projector-only unfreeze. peft wraps the base at
-    # model.base_model.model.
-    groups = [g.strip() for g in args.trainable_groups.split(",") if g.strip()]
-    n_unfroze = apply_trainable_groups(model.base_model.model, groups)
+    if use_lora:
+        # Apply LoRA to Qwen2 attention projection layers only
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+        if args.lora_mlp:
+            target_modules += ["gate_proj", "up_proj", "down_proj"]
+        lora_cfg = LoraConfig(
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            target_modules=target_modules,
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM",
+        )
+        model = get_peft_model(model, lora_cfg)
+        base = model.base_model.model      # peft wraps the base here
+    else:
+        base = model                       # no peft wrapper in the align stage
+
+    # Unfreeze the selected non-LoRA groups (B7).
+    n_unfroze = apply_trainable_groups(base, groups)
     log.info(f"Trainable groups {groups}: unfroze {n_unfroze} param tensors")
+
+    # The reasoning tokens are useless if their embeddings are frozen: they are NEW rows
+    # with no learned meaning. Fail loudly rather than train a model that can never open
+    # its own <reason_start> block.
+    if os.environ.get("REASONING_TRACES") and "embeddings" not in groups:
+        raise ValueError(
+            "REASONING_TRACES is set but the 'embeddings' group is frozen. The "
+            "<reason_start>/<reason_end> rows are mean-initialised and carry no meaning "
+            "yet — without training them the model cannot learn to emit a reasoning "
+            "block. Use --stage align|finetune, or add 'embeddings' to --trainable-groups.")
+    if os.environ.get("REASON_GATE") == "1" and not os.environ.get("REASONING_TRACES"):
+        raise ValueError(
+            "REASON_GATE=1 without REASONING_TRACES: the trajectory would be cut off from "
+            "perception with no reasoning block to route through. That trains a model that "
+            "cannot see. Set REASONING_TRACES, or turn the gate off.")
 
     # Keep trainable params in fp32 (frozen base stays fp16 to save memory).
     # GradScaler.unscale_ rejects fp16 gradients, so the LoRA adapters and

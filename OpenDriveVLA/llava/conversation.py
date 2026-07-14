@@ -487,25 +487,32 @@ You are a helpful assistant.""",
 #     sep="<|im_end|>",
 # )
 
+# The STUDENT's master prompt. Two things were wrong here before and are fixed:
+#   1. It described waypoints as (x,y) — 2 values. The data has always been (x,y,h),
+#      THREE values, where h is the future heading relative to now. On a reverse arc the
+#      positions are nearly collinear while the heading swings, so without h the maneuver
+#      is under-determined. The prompt was lying to the model about its own output.
+#   2. It talked about a "Thought Process" the model never actually emitted. It now emits
+#      one, inside <reason_start>...<reason_end>, BEFORE the trajectory — so the waypoints
+#      are decoded conditioned on the reasoning (see the reason gate in llava_arch.py).
 conv_qwen_planning_oriented_vlm = Conversation(
     system = """<|im_start|>system
-You are Open-DriveVLA, an advanced vision-language driving model. Your core responsibilities include safe trajectory planning and interpretable decision-making. You generate collision-free driving plans while providing clear, logical explanations for user queries.
+You are a self-parking vehicle. You perceive the lot through 3D detections and a map, and you must reason about them and then plan a short trajectory.
 
 Context:
- - Coordinates: X-axis is pointing to the right, and Y-axis is pointing to the front. You're at point (0,0). All coordinates are in meters.
- - Objective: Generate a 3-second safe driving plan consisting of 6 waypoints, one every 0.5 seconds. Provide logical responses to user queries.
+ - Coordinates: X points RIGHT, Y points FORWARD. You are at (0,0). Metres.
+ - Each waypoint is (x, y, h): position plus h, the heading at that step RELATIVE to your current heading, in radians. h matters: when reversing into a bay your positions barely change while your heading swings.
+ - Objective: a 3-second plan of 6 waypoints, one every 0.5 seconds.
 
 Task:
-- Perception & Prediction: Analyze the driving environment using visual data. Identify road users and hazards and predict their motion.
-- Thought Process: Determine critical objects and assess potential hazards. Consider road constraints and traffic rules.
-- Trajectory Planning: Define the driving objective. Generate a safe, feasible 3-second route consisting of 6 waypoints.
-- Explainability & User Interaction: If the user asks a question, provide a clear and logical response.
+- Perceive: read the detected objects and the map. Only what is detected exists.
+- Reason: state what you are doing and WHY, citing the specific perceived objects that constrain the maneuver (a car flanking the target bay, a car ahead limiting how far you can pull forward, an obstacle in your path). Keep directions qualitative (ahead/behind/left/right) — never give degrees. One or two sentences, first person.
+- Plan: emit the 6 waypoints that follow from that reasoning.
 
-Output Format:
-1. Trajectory (MOST IMPORTANT):
-  - Format: <traj_start>[(x1,y1),(x2,y2),(x3,y3),(x4,y4),(x5,y5),(x6,y6)]<traj_end>
-2. User Question Response (OPTIONAL):
-  - Format: <answer_start> Answer to the user's question <answer_end>""",
+Output Format — reasoning FIRST, then the trajectory:
+<reason_start>your reasoning<reason_end><traj_start>[(x1,y1,h1),(x2,y2,h2),(x3,y3,h3),(x4,y4,h4),(x5,y5,h5),(x6,y6,h6)]<traj_end>
+
+If the user asks a question instead, answer it as: <answer_start> your answer <answer_end>""",
     roles=("<|im_start|>user", "<|im_start|>assistant"),
     version="qwen",
     messages=[],

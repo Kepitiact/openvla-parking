@@ -233,6 +233,37 @@ def test_qwen_prompt_is_two_level_and_grounded():
     assert "Entities you may name:" in msgs[1]["content"]
 
 
+def test_render_parse_roundtrip_and_malformed_output():
+    """render_assistant_turn and parse_assistant_turn are THE write/read pair — training,
+    inference and eval all use them, so they must never drift. A malformed model output
+    must fail loudly (so a format-failure RATE can be reported), never silently score as
+    a trajectory of zeros."""
+    from reasoning_data_gen.schema import format_trajectory, parse_assistant_turn
+
+    infos = _infos()
+    by = _index(infos)
+    for info in infos[:5]:
+        fact = extract_fact(SceneRecord.from_gt(info))
+        trace = MockVerbalizer().verbalize(fact)
+        traj = _future_traj(info, by)
+        turn = render_assistant_turn(fact, trace, format_trajectory(traj.tolist()))
+
+        p = parse_assistant_turn(turn)
+        assert p.ok and p.error is None
+        assert p.trace == trace
+        assert len(p.trajectory) == 6
+        for got, want in zip(p.trajectory, traj.tolist()):
+            for a, b in zip(got, want):
+                assert abs(a - round(b, 2)) < 1e-9      # 2-dp render is the contract
+
+    # malformed output must never yield a usable trajectory silently
+    for bad in ["<reason_start>x<reason_end>",                                   # no traj
+                "<reason_start>x<reason_end><traj_start>[(1,2,3),(1,2,3)]<traj_end>",  # short
+                "just some words"]:
+        p = parse_assistant_turn(bad)
+        assert not p.ok and p.trajectory is None and p.error
+
+
 def test_bay_flank_detection_geometry():
     """A vehicle placed in the bay adjacent to the target slot must be found as a
     flank, on the correct side (the ego-frame across-axis was verified to 1e-6 m

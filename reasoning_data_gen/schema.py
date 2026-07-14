@@ -240,6 +240,58 @@ def render_assistant_turn(fact: FactRecord, trace: str, traj_str: str) -> str:
     return f"{REASON_START}{trace}{REASON_END}{TRAJ_START}{traj_str}{TRAJ_END}"
 
 
+@dataclass
+class ParsedTurn:
+    """What the model actually produced. `trajectory` is None when the trajectory block
+    is missing or malformed — count those, never silently substitute zeros."""
+
+    trace: Optional[str]
+    trajectory: Optional[List[List[float]]]
+    ok: bool                      # both blocks present and well-formed
+    error: Optional[str] = None
+
+
+_WAYPOINT_RE = re.compile(r"\(\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*\)")
+
+
+def _between(text: str, start: str, end: str) -> Optional[str]:
+    i = text.find(start)
+    if i < 0:
+        return None
+    j = text.find(end, i + len(start))
+    if j < 0:
+        return None
+    return text[i + len(start):j]
+
+
+def parse_assistant_turn(text: str, n_waypoints: int = 6) -> ParsedTurn:
+    """Inverse of render_assistant_turn(). THE parser — training, inference and eval all
+    use this one, so the write and read sides can never drift apart.
+
+    Robust by design: a model can emit anything. A missing or malformed block returns
+    ok=False with a reason, so the caller can report a format-failure RATE (itself a
+    metric) instead of quietly scoring garbage as if it were a trajectory.
+    """
+    trace = _between(text, REASON_START, REASON_END)
+    traj_str = _between(text, TRAJ_START, TRAJ_END)
+
+    if traj_str is None:
+        return ParsedTurn(trace=trace, trajectory=None, ok=False,
+                          error="no trajectory block")
+
+    pts = [[float(a), float(b), float(c)] for a, b, c in _WAYPOINT_RE.findall(traj_str)]
+    if len(pts) != n_waypoints:
+        return ParsedTurn(trace=trace, trajectory=None, ok=False,
+                          error=f"expected {n_waypoints} waypoints, parsed {len(pts)}")
+    if trace is None:
+        # A valid trajectory but no reasoning: legitimate when the model is trained
+        # without reasoning, and a FAILURE when it is trained with it. The caller knows
+        # which; report it rather than deciding here.
+        return ParsedTurn(trace=None, trajectory=pts, ok=False, error="no reasoning block")
+
+    return ParsedTurn(trace=trace.strip(), trajectory=pts, ok=True)
+
+
 # ── Text -> mention extraction (shared by validators + verbalizer guard) ───────
 _WORD_RE = re.compile(r"[a-z_]+")
 
