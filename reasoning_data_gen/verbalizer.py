@@ -110,8 +110,30 @@ def find_hallucinations(trace: str, fact: FactRecord) -> List[str]:
     for m in extract_entity_mentions(trace):
         if m not in allowed_entities:
             problems.append(f"entity:{m}")
-    for d in extract_decision_mentions(trace):
-        if d != fact.decision:
+
+    # A decision word is only a false CLAIM if the trace asserts it INSTEAD of the real
+    # decision. Naming another decision alongside the real one is a sub-goal or a purpose
+    # clause, and it is how a driver actually talks:
+    #
+    #   decision=reverse: "I need to reverse to align with the slot"   <- align is WHY
+    #
+    # Flagging that (we did) rejects a perfectly faithful trace, and the only fixes that
+    # keep a strict rule are bad ones: ban the word, and the teacher must write around its
+    # own vocabulary, which forces stilted phrasing and collapses everything toward one
+    # template -- the exact decoration failure the reasoning exists to avoid.
+    #
+    # The dangerous case is unchanged and still caught: a trace that justifies a DIFFERENT
+    # action than the one taken ("I am aligning" when the decision is reverse) never names
+    # the real decision, so it is rejected. Text/trajectory contradiction is separately
+    # guarded by action_fidelity, which reads the trajectory, not the words.
+    mentioned = extract_decision_mentions(trace)
+    if fact.decision not in mentioned:
+        # Decision grounding: the trace must state the action it is justifying. A trace
+        # that names no decision at all ("I have completed the park", when the decision is
+        # reverse) is not harmless -- it is an unanchored trace, and it slips past a check
+        # that only looks for *conflicting* words.
+        problems.append(f"decision:missing:{fact.decision}")
+        for d in mentioned:
             problems.append(f"decision:{d}")
     return problems
 

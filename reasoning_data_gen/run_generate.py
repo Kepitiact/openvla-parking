@@ -42,7 +42,7 @@ from .counterfactual import make_stop_injection
 from .fact_extractor import DEFAULT_THRESHOLDS, Thresholds, extract_fact
 from .scene_record import DetectedObject, Frame, SceneRecord, _global_to_ego_rf, _norm_angle
 from .schema import FactRecord, format_trajectory, render_assistant_turn
-from .verbalizer import Verbalizer, get_verbalizer
+from .verbalizer import MockVerbalizer, Verbalizer, get_verbalizer
 
 COORD_CONVENTION = "ego frame: x=right(+right), y=forward(+forward); dheading rad in [-pi,pi]"
 
@@ -205,11 +205,27 @@ def generate(
             "produced by drivevla/extract_uniad_features.py). Run that first on HAL.")
 
     verb = verbalizer or get_verbalizer(teacher, **teacher_kwargs)
+    fallback_verb = MockVerbalizer()
+
+    def verbalize_or_fall_back(f) -> tuple:
+        """Never let ONE frame kill the run. Three separate 32B jobs have now died at a
+        single unverbalizable frame, and on the 62k-frame run that is hours of A100 thrown
+        away at frame 40,000 with nothing written. The mock is grounded by construction
+        (it only ever names what is in the fact), so a fallback is safe -- but it is a
+        template, so it must never be silent: every fallback is tagged in the record and
+        counted in the manifest. If that count is not ~0, the teacher has a real problem
+        and we look at it BEFORE training on the output."""
+        try:
+            return verb.verbalize(f), teacher
+        except RuntimeError as e:
+            fallback_reasons.append(str(e).split("\n")[0])
+            return fallback_verb.verbalize(f), f"{teacher}_fallback_mock"
 
     trace_records: List[Dict[str, Any]] = []
     cf_pairs: List[Dict[str, Any]] = []
     decision_hist: Counter = Counter()
     reconcile_hist: Counter = Counter()
+    fallback_reasons: List[str] = []
     missing_uniad = 0
 
     for info in infos:
@@ -245,9 +261,9 @@ def generate(
         else:
             raise ValueError(f"unknown source {source!r}; expected 'gt' or 'uniad'")
 
-        trace = verb.verbalize(fact)
+        trace, used_teacher = verbalize_or_fall_back(fact)
 
-        record = _make_record(info["token"], "factual", info["token"], source, teacher,
+        record = _make_record(info["token"], "factual", info["token"], source, used_teacher,
                               fact, trace, traj, scene, status, synthetic_tokens=[])
         trace_records.append(record)
         decision_hist[fact.decision] += 1
@@ -268,7 +284,7 @@ def generate(
             fac_rec = _make_record(info["token"], "factual", pair.pair_id, source, teacher,
                                    pair.factual_fact, trace, pair.factual_traj, scene,
                                    status, synthetic_tokens=[])
-            cf_trace = verb.verbalize(pair.counterfactual_fact)
+            cf_trace, _ = verbalize_or_fall_back(pair.counterfactual_fact)
             cf_rec = _make_record(info["token"], "counterfactual", pair.pair_id, source,
                                   teacher, pair.counterfactual_fact, cf_trace,
                                   pair.counterfactual_traj, cf_scene, status,
@@ -299,7 +315,12 @@ def generate(
         "infos": str(infos_path),
         "limit": limit,
         "coordinate_convention": COORD_CONVENTION,
-        "counts": {"frames": n, "counterfactual_pairs": len(cf_pairs)},
+        "counts": {"frames": n, "counterfactual_pairs": len(cf_pairs),
+                   # Frames the teacher could not verbalize cleanly, which fell back to the
+                   # (template) mock. Should be ~0. If it is not, READ fallback_examples
+                   # before training on this data -- the traces are grounded but templated.
+                   "teacher_fallbacks": len(fallback_reasons)},
+        "fallback_examples": fallback_reasons[:5],
         "thresholds": dataclasses.asdict(thresholds),
         "decision_histogram": dict(decision_hist),
         "reconcile_histogram": dict(reconcile_hist),

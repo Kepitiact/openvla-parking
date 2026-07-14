@@ -57,11 +57,16 @@ DECISION_LEXICON: Dict[str, str] = {
     "align": "align", "aligning": "align", "line up": "align", "lining up": "align",
     "creep": "creep", "creeping": "creep", "crawl": "creep", "crawling": "creep",
     "reverse": "reverse", "reversing": "reverse", "back": "reverse", "backing": "reverse",
-    "stop": "stop_yield", "yield": "stop_yield", "halt": "stop_yield", "yielding": "stop_yield",
+    "stop": "stop_yield", "yield": "stop_yield", "halt": "stop_yield",
+    "yielding": "stop_yield", "stopping": "stop_yield",
     "shift": "shift_gear", "gear": "shift_gear", "change gear": "shift_gear",
+    "shifting": "shift_gear",
     "parked": "complete_park", "finish": "complete_park", "complete": "complete_park",
+    "completed": "complete_park", "completing": "complete_park",
     "abort": "abort", "aborting": "abort",
 }
+# NB deliberately absent: "park"/"parking". They appear in "the parking slot", "the parking
+# lot" in almost every trace, and would read as a complete_park claim on every frame.
 
 # ── Entities ──────────────────────────────────────────────────────────────────
 # Obstacle classes the perceiver can report (matches gt_names in the infos).
@@ -312,10 +317,19 @@ def extract_entity_mentions(text: str) -> Set[str]:
 
 
 def extract_decision_mentions(text: str) -> Set[str]:
-    """Canonical decisions a free-form trace claims (via DECISION_LEXICON)."""
+    """Canonical decisions a free-form trace claims (via DECISION_LEXICON).
+
+    Word-boundary matched, not substring: the lexicon is full of ordinary English
+    ("back", "stop", "complete", "gear"), so a plain `phrase in text` fires on
+    "feedback", "completely", "stopping distance". A false decision claim gets the
+    trace rejected, and the teacher cannot see why -- it just keeps regenerating.
+    """
     low = text.lower()
     found: Set[str] = set()
     for phrase, decision in DECISION_LEXICON.items():
-        if phrase in low:
+        # Tolerate regular inflection: word boundaries alone miss "gears", "aligns",
+        # "completed" -- which reads as the trace naming NO decision, and a trace that
+        # never states its decision is exactly what decision-grounding forbids.
+        if re.search(rf"\b{re.escape(phrase)}(?:s|es|ed|ing)?\b", low):
             found.add(decision)
     return found
