@@ -430,7 +430,7 @@ def main():
             "<reason_start>/<reason_end> rows are mean-initialised and carry no meaning "
             "yet — without training them the model cannot learn to emit a reasoning "
             "block. Use --stage align|finetune, or add 'embeddings' to --trainable-groups.")
-    if os.environ.get("REASON_GATE") == "1" and not os.environ.get("REASONING_TRACES"):
+    if os.environ.get("REASON_GATE", "0") not in ("", "0") and not os.environ.get("REASONING_TRACES"):
         raise ValueError(
             "REASON_GATE=1 without REASONING_TRACES: the trajectory would be cut off from "
             "perception with no reasoning block to route through. That trains a model that "
@@ -488,10 +488,20 @@ def main():
         generator=gen,
     )
 
+    # Embeddings get NO weight decay. AdamW's decoupled decay multiplies weights every
+    # step REGARDLESS of gradient — so with decay, the 151k pretrained embedding rows
+    # (grad-frozen by freeze_pretrained_embedding_rows, and tied to lm_head) would still
+    # shrink ~1.5%/epoch, silently eroding the language model. Excluding embeddings from
+    # decay is standard practice anyway.
+    decay_params, no_decay_params = [], []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        (no_decay_params if "embed_tokens" in name else decay_params).append(p)
     optimizer = torch.optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad],
+        [{"params": decay_params, "weight_decay": 0.01},
+         {"params": no_decay_params, "weight_decay": 0.0}],
         lr=args.lr,
-        weight_decay=0.01,
     )
     # GradScaler for the hand-rolled single-GPU fp16 path. Under Accelerate the
     # framework owns the scaler, so disable ours there.

@@ -774,8 +774,11 @@ class LlavaMetaForCausalLM(ABC):
         # training dropped, this mask is the ONLY mechanism forcing that mediation.
         #
         # Returned as a 4D mask: transformers consumes a 4D attention_mask verbatim as the
-        # causal mask, so no caller signature changes. Off unless REASON_GATE=1.
-        if os.environ.get("REASON_GATE", "0") == "1" and attention_mask is not None:
+        # causal mask, so no caller signature changes. Off unless REASON_GATE is set.
+        # NB: any non-empty value other than "0" activates the gate — "1" (default
+        # streams), "track", "track,map,scene", ... . An exact ==\"1\" check here once
+        # silently ignored every explicit stream spec.
+        if os.environ.get("REASON_GATE", "0") not in ("", "0") and attention_mask is not None:
             markers_padded = torch.zeros((batch_size, max_len), dtype=new_markers[0].dtype,
                                          device=new_input_embeds.device)
             pad_left = getattr(self.config, "tokenizer_padding_side", "right") == "left"

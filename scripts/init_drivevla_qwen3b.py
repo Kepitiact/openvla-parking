@@ -108,7 +108,21 @@ def main():
     cfg = LlavaQwenConfig.from_pretrained(args.base)
     cfg.model_type = "llava_qwen"
     cfg.architectures = ["LlavaQwenForCausalLM"]
-    cfg.vision_tower_pretrained = ""
+    # "mmdet3d" (a non-path sentinel) routes UniadTrackMapVisionTower.load_model into its
+    # load_mmdet3d_weights=True branch, i.e. the tower loads from the explicit UNIAD_CKPT
+    # env var at build time. With "" the tower expects its weights from THIS llava
+    # checkpoint — which deliberately has none — and comes up RANDOM. Explicit beats
+    # implicit: if UNIAD_CKPT is missing, loading fails loudly instead of silently
+    # running an untrained detector.
+    cfg.vision_tower_pretrained = "mmdet3d"
+    # delay_load is NOT cosmetic. If the tower is built during __init__, it loads
+    # UNIAD_CKPT and then from_pretrained continues restoring the safetensors — and since
+    # this checkpoint deliberately carries no vision tensors, transformers RE-INITIALIZES
+    # every "missing" vision weight with random values, silently clobbering the trained
+    # UniAD that was just loaded (verified: tower weight sums went 1316.22 -> 0.46).
+    # With delay_load the tower is built by llava.model.builder AFTER from_pretrained
+    # finishes, so the UNIAD_CKPT weights land on the final model and stay.
+    cfg.delay_load = True
     cfg.use_mm_proj = True
     cfg.mm_projector_type = MM_PROJECTOR_TYPE
     cfg.mm_hidden_size = UNIAD_FEATURE_DIM
