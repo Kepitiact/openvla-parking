@@ -15,7 +15,13 @@
 #   sbatch scripts/hal_prep_training_data.sbatch --stamp-only
 #SBATCH --job-name=prep_train_data
 #SBATCH --partition=zprodcpu
-#SBATCH --time=04:00:00
+#SBATCH --time=06:00:00
+#SBATCH --cpus-per-task=4
+# MEMORY: this is the whole reason the first attempt died. The nuScenes devkit parses the
+# ENTIRE v1.0-carla DB into Python objects -- sample_annotation.json alone is 1.4 GB
+# (~3.4M annotations) and JSON->objects costs 3-5x -- on top of the 2.6 GB infos pkl.
+# The Slurm default (1856 MB) OOM-killed it in 51 seconds.
+#SBATCH --mem=96G
 #SBATCH --output=/workspaces/s0002438/openvla-parking/checkpoints/stage1_carla_full/prep_%j.log
 
 set -euo pipefail
