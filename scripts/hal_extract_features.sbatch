@@ -67,4 +67,6 @@ srun singularity exec --nv \
     --conversations "$STAGING/data_carla/processed/carla_conversations.json" \
     --num-workers 4
 
-echo "[extract] done: $(ls "$OUTDIR"/*.pth 2>/dev/null | wc -l) feature files"
+# find, not `ls *.pth`: 61k filenames overflow ARG_MAX, so the glob dies with
+# "Argument list too long" and the count silently prints 0 on a run that fully succeeded.
+echo "[extract] done: $(find "$OUTDIR" -name '*.pth' 2>/dev/null | wc -l) feature files"
