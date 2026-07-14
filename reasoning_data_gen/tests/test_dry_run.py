@@ -44,7 +44,10 @@ def test_dry_run_end_to_end(tmp_path):
     manifest = generate(str(FIXTURE), source="gt", teacher="mock", out_dir=out)
 
     assert manifest["counts"]["frames"] == 20
-    assert manifest["counts"]["counterfactual_pairs"] >= 1
+    # Counterfactuals are OFF by default (deferred to v2, never fed to training). Asserting
+    # 0 here is the point: an unverbalizable stop_yield killed the whole 32B teacher run,
+    # and we do not pay that cost for data we do not train on.
+    assert manifest["counts"]["counterfactual_pairs"] == 0
 
     traces = [json.loads(l) for l in (out / "traces.jsonl").read_text().splitlines()]
     assert len(traces) == 20
@@ -64,6 +67,14 @@ def test_dry_run_end_to_end(tmp_path):
     assert "reconcile_histogram" in manifest and "decision_histogram" in manifest
     assert "thresholds" in manifest
     assert (out / "counterfactuals.jsonl").exists()
+
+
+def test_counterfactuals_are_opt_in(tmp_path):
+    """The machinery still works when explicitly asked for -- it is deferred, not deleted."""
+    out = tmp_path / "v0_cf"
+    manifest = generate(str(FIXTURE), source="gt", teacher="mock", out_dir=out,
+                        counterfactuals=True)
+    assert manifest["counts"]["counterfactual_pairs"] >= 1
 
 
 def test_refuses_overwrite(tmp_path):

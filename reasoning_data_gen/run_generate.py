@@ -183,6 +183,7 @@ def generate(
     verbalizer: Optional[Verbalizer] = None,
     uniad_features_dir: Optional[str] = None,
     uniad_score_thr: float = 0.3,
+    counterfactuals: bool = False,
     **teacher_kwargs,
 ) -> Dict[str, Any]:
     out_dir = pathlib.Path(out_dir)
@@ -253,6 +254,13 @@ def generate(
         reconcile_hist[status] += 1
 
         # Counterfactual stop-injection (skipped when the ego is barely moving).
+        # OFF by default: counterfactuals are deferred to v2 (real pedestrian episodes beat
+        # synthetic injection, and nothing injects the synthetic obstacle into the UniAD
+        # tokens anyway -- see FUTURE_WORK 2). Generating them is not free: the teacher must
+        # verbalize a stop_yield it has no grounding for, and one unverbalizable frame kills
+        # the whole run. Do not pay that for data we do not train on.
+        if not counterfactuals:
+            continue
         frame = Frame(token=info["token"], scene=scene, fact=fact, trajectory=traj)
         pair = make_stop_injection(frame)
         if pair is not None:
@@ -331,6 +339,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--uniad-features-dir", default=None)
     ap.add_argument("--uniad-score-thr", type=float, default=0.3,
                     help="drop UniAD detections below this confidence")
+    ap.add_argument("--counterfactuals", action="store_true",
+                    help="also generate stop-injection pairs. OFF by default: deferred to "
+                         "v2, not fed to training, and one unverbalizable frame kills the run")
     # QwenVerbalizer config (unused for --teacher mock); drops into an sbatch wrapper.
     ap.add_argument("--qwen-model-path", default=None)
     ap.add_argument("--qwen-endpoint", default=None)
@@ -353,6 +364,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         limit=args.limit,
         uniad_features_dir=args.uniad_features_dir,
         uniad_score_thr=args.uniad_score_thr,
+        counterfactuals=args.counterfactuals,
         **teacher_kwargs,
     )
     print(json.dumps(manifest, indent=2))
