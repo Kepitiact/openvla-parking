@@ -363,9 +363,31 @@ class LlavaMetaForCausalLM(ABC):
         device = markers.device
         min_val = torch.finfo(dtype).min
 
-        perception = ((markers == SCENE_TOKEN_INDEX)
-                      | (markers == TRACK_TOKEN_INDEX)
-                      | (markers == MAP_TOKEN_INDEX))                      # (B, L)
+        # WHICH streams to gate. The gate should block exactly what the reasoning is
+        # supposed to MEDIATE — and nothing more.
+        #   track  the detected objects. This is what the reasoning actually cites, so it
+        #          MUST flow through the reasoning. Always gated.
+        #   map    semantic layout; the reasoning can carry it. Gated by default.
+        #   scene  the raw 6-camera image features. Our reasoning NEVER describes images
+        #          (no curbs, free space, lane markings), so gating it would simply destroy
+        #          information the reasoning cannot relay. NOT gated by default.
+        # REASON_GATE=1 -> "track,map"; or name streams explicitly, e.g. "track,map,scene".
+        spec = os.environ.get("REASON_GATE", "0")
+        streams = {"track", "map"} if spec == "1" else {
+            s.strip() for s in spec.split(",") if s.strip() and s not in ("0", "1")}
+        sentinels = []
+        if "track" in streams:
+            sentinels.append(TRACK_TOKEN_INDEX)
+        if "map" in streams:
+            sentinels.append(MAP_TOKEN_INDEX)
+        if "scene" in streams:
+            sentinels.append(SCENE_TOKEN_INDEX)
+        if not sentinels:
+            raise ValueError(f"REASON_GATE={spec!r} selects no perception stream to gate.")
+
+        perception = torch.zeros_like(markers, dtype=torch.bool)            # (B, L)
+        for s in sentinels:
+            perception |= (markers == s)
 
         traj_start_id = getattr(self.config, "traj_start_token_id", None)
         if traj_start_id is None:
