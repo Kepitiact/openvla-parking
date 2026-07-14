@@ -21,7 +21,11 @@
 # ENTIRE v1.0-carla DB into Python objects -- sample_annotation.json alone is 1.4 GB
 # (~3.4M annotations) and JSON->objects costs 3-5x -- on top of the 2.6 GB infos pkl.
 # The Slurm default (1856 MB) OOM-killed it in 51 seconds.
-#SBATCH --mem=96G
+#
+# 40G, not more: zprodcpu nodes have only 48 GB TOTAL (hal-cn[03-04]), so a bigger request
+# is rejected outright ("Requested node configuration is not available"). 40G is safe --
+# the same job completes on a 30 GB laptop with ~24 GB free, so the true need is under that.
+#SBATCH --mem=40G
 #SBATCH --output=/workspaces/s0002438/openvla-parking/checkpoints/stage1_carla_full/prep_%j.log
 
 set -euo pipefail
