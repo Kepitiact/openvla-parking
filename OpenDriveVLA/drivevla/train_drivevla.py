@@ -646,7 +646,10 @@ def main():
                     model, optimizer, scheduler, scaler, accelerator, is_main, log)
 
         if args.max_steps and global_step >= args.max_steps:
-            break   # smoke test: don't roll into another epoch
+            # Smoke: also exercise the save path (LoRA + the 22 new tokens) before stopping,
+            # so a save bug fails here in minutes, not after the multi-hour align run.
+            save_lora(out_dir, epoch, model, tokenizer, accelerator, is_main, log)
+            break
 
         avg_loss = epoch_loss / max(1, n_batches)
         log.info(f"Epoch {epoch}/{args.num_epochs} - avg_loss={avg_loss:.4f} "
