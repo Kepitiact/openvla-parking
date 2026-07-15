@@ -44,6 +44,7 @@ from .schema import (
     ROLE_IN_PATH,
     ROLE_REAR,
     ROLE_SWEPT,
+    manner_ref,
     metric_ref,
     obstacle_ref,
     slot_ref,
@@ -86,6 +87,13 @@ class Thresholds:
     rear_len: float = 6.00         # a vehicle this far behind limits backing up
     rear_half_width: float = 2.00
     swept_radius: float = 2.50     # object within this of an upcoming waypoint = in the arc
+
+    # ── grounded qualitative manner (interpretability; no number reaches the text) ──
+    tight_steer: float = 0.60      # |steer| above this -> "a tight turn" (> p50 0.36)
+    gentle_steer: float = 0.25     # |steer| below this -> "a gentle correction"; between
+                                   #   the two we stay silent rather than mislabel
+    setup_dist: float = 3.00       # forward with slot farther than this -> "setting up the
+                                   #   reverse"; nearer -> "a short final adjustment"
 
 
 DEFAULT_THRESHOLDS = Thresholds()
@@ -268,10 +276,32 @@ def extract_fact(scene: SceneRecord, th: Thresholds = DEFAULT_THRESHOLDS,
         o = swept_path_obstacle(scene, planned_path, th)
         return [obstacle_ref(o.cls, o.right, o.forward, ROLE_SWEPT)] if o else []
 
+    # ── grounded qualitative manner (Q2/Q3): HOW the maneuver runs, from ego state ──
+    def steer_manner() -> List:
+        if steer > th.tight_steer:
+            return [manner_ref("tight_turn")]
+        if steer < th.gentle_steer:
+            return [manner_ref("gentle_turn")]
+        return []   # in-between: stay silent rather than mislabel
+
+    def forward_purpose() -> List:
+        if dist is None:
+            return []
+        return [manner_ref("setup_forward" if dist > th.setup_dist else "short_adjust")]
+
+    def closer_flank() -> List:
+        # Only meaningful when BOTH bays are occupied (~7% of frames); names the nearer.
+        left, right = bay_flanks(scene, th)
+        if left is None or right is None:
+            return []
+        dl = float(np.hypot(left.right, left.forward))
+        dr = float(np.hypot(right.right, right.forward))
+        return [manner_ref("closer_left" if dl <= dr else "closer_right")]
+
     # 1. gear change — cite the car ahead that ran the forward swing out of room.
     if scene.prev_reverse is not None and scene.prev_reverse != reverse:
         return FactRecord("shift_gear",
-                          _dedup(front_ref() + slot_factors), meta)
+                          _dedup(front_ref() + slot_factors) + steer_manner(), meta)
 
     # 2/3. stopped states
     if speed < th.speed_stop:
@@ -284,7 +314,8 @@ def extract_fact(scene: SceneRecord, th: Thresholds = DEFAULT_THRESHOLDS,
         if dist is not None and aerr is not None and dist < th.near_slot_dist and aerr < th.align_err:
             return FactRecord(
                 "complete_park",
-                _dedup(flank_refs() + slot_factors + [metric_ref("align_err", aerr)]),
+                _dedup(flank_refs() + slot_factors + [metric_ref("align_err", aerr)])
+                + closer_flank(),
                 meta)
 
     # 4. reversing — the bay's flanking cars and whatever limits backing up.
@@ -292,7 +323,8 @@ def extract_fact(scene: SceneRecord, th: Thresholds = DEFAULT_THRESHOLDS,
         factors = flank_refs() + rear_ref() + slot_factors
         if aerr is not None:
             factors.append(metric_ref("align_err", aerr))
-        return FactRecord("reverse", _dedup(factors), meta)
+        return FactRecord("reverse",
+                          _dedup(factors) + closer_flank() + steer_manner(), meta)
 
     # forward phase (reverse == False)
     # 5. creep: crawling with a nearby in-path object
@@ -308,8 +340,10 @@ def extract_fact(scene: SceneRecord, th: Thresholds = DEFAULT_THRESHOLDS,
         factors = swept_ref() + front_ref() + slot_factors
         if aerr is not None:
             factors.append(metric_ref("align_err", aerr))
-        return FactRecord("align", _dedup(factors), meta)
+        return FactRecord("align", _dedup(factors) + steer_manner(), meta)
 
-    # 7. approach: forward-phase default — cite what caps the approach.
+    # 7. approach: forward-phase default — cite what caps the approach, and whether this
+    #    is a long setup roll or a short final nudge (Q3).
     return FactRecord("approach",
-                      _dedup(front_ref() + swept_ref() + slot_factors), meta)
+                      _dedup(front_ref() + swept_ref() + slot_factors) + forward_purpose(),
+                      meta)

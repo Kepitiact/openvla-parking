@@ -77,7 +77,20 @@ def _factor_phrase(ef: EntityRef) -> Optional[str]:
         if ef.name == "align_err":
             return ("my heading is nearly on target" if (ef.value or 0.0) < 0.20
                     else "my heading still needs correcting")
+    if ef.kind == "manner":
+        return _MANNER_PHRASE.get(ef.name)
     return None
+
+
+# Grounded qualitative manner -> phrasing. Interpretable, no number, no coordinate.
+_MANNER_PHRASE = {
+    "tight_turn": "this needs a tight turn",
+    "gentle_turn": "only a gentle steering correction is needed",
+    "setup_forward": "I am pulling forward to set up the reverse",
+    "short_adjust": "this is only a short final adjustment",
+    "closer_left": "the nearer of the two cars is on my left",
+    "closer_right": "the nearer of the two cars is on my right",
+}
 
 
 class Verbalizer:

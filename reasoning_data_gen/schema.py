@@ -89,6 +89,12 @@ class EntityRef:
       'obstacle' -> name in OBSTACLE_CLASSES, at ego-local (r, f)
       'slot'     -> name in {'free', 'occupied'}
       'metric'   -> a scalar justification, name in {'dist_to_slot','align_err',...}, value=v
+      'manner'   -> a grounded QUALITATIVE descriptor of HOW the maneuver is executed,
+                    name in MANNER_NAMES (tight/gentle turn, forward setup vs short
+                    adjustment, which flank is closer). No number, no coordinate — it is
+                    derived deterministically from the ego state / geometry, so it is
+                    grounded and validator-safe, and it makes the trace interpretable
+                    without inviting hallucination.
     All coordinates are ego frame: r=right (+right), f=forward (+forward), metres.
     """
 
@@ -109,6 +115,8 @@ class EntityRef:
             return f"slot({self.name})"
         if self.kind == "metric":
             return f"{self.name}={self.value:.1f}"
+        if self.kind == "manner":
+            return f"manner({self.name})"
         raise ValueError(f"unknown EntityRef.kind: {self.kind!r}")
 
     def bearing(self) -> Optional[str]:
@@ -186,6 +194,21 @@ def slot_ref(occupied: bool, right: Optional[float] = None,
 
 def metric_ref(name: str, value: float) -> EntityRef:
     return EntityRef("metric", name, value=float(value))
+
+
+# Grounded qualitative manner descriptors. Each is derived deterministically in
+# fact_extractor from the ego state / geometry, so the teacher may state it and the
+# validators accept it (manner carries no mention key, and is not future-derived).
+MANNER_NAMES: FrozenSet[str] = frozenset({
+    "tight_turn", "gentle_turn",       # Q2: how hard the steering is
+    "setup_forward", "short_adjust",   # Q3: is the forward motion a long setup or a nudge
+    "closer_left", "closer_right",     # Q2: which flanking car is the nearer one
+})
+
+
+def manner_ref(name: str) -> EntityRef:
+    assert name in MANNER_NAMES, f"unknown manner {name!r}"
+    return EntityRef("manner", name)
 
 
 # ── Fact record ───────────────────────────────────────────────────────────────

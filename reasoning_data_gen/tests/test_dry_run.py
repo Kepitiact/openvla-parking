@@ -24,6 +24,7 @@ from reasoning_data_gen.run_generate import _future_traj, _index, _load_infos, g
 from reasoning_data_gen.scene_record import Frame, SceneRecord
 from reasoning_data_gen.schema import (
     DECISIONS,
+    MANNER_NAMES,
     REASON_END,
     REASON_START,
     TRAJ_END,
@@ -67,6 +68,19 @@ def test_dry_run_end_to_end(tmp_path):
     assert "reconcile_histogram" in manifest and "decision_histogram" in manifest
     assert "thresholds" in manifest
     assert (out / "counterfactuals.jsonl").exists()
+
+
+def test_grounded_manner_facts_present_and_clean(tmp_path):
+    """Q2/Q3 enrichment: grounded qualitative manner facts appear, and adding them does
+    NOT break entity/causal/schema fidelity (manner carries no mention key, no coords)."""
+    out = tmp_path / "v0_manner"
+    manifest = generate(str(FIXTURE), source="gt", teacher="mock", out_dir=out)
+    traces = [json.loads(l) for l in (out / "traces.jsonl").read_text().splitlines()]
+    manner = [e for r in traces for e in r["causal_factors"] if e["kind"] == "manner"]
+    assert manner, "no grounded manner facts were produced"
+    assert {m["name"] for m in manner} <= MANNER_NAMES
+    for name in ("entity_fidelity", "causal_locality", "schema_conformance"):
+        assert manifest["validator_pass_rates"][name] == 1.0, name
 
 
 def test_counterfactuals_are_opt_in(tmp_path):
