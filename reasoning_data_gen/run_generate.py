@@ -58,6 +58,20 @@ def _index(infos: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     return {i["token"]: i for i in infos}
 
 
+def _shard_by_episode(infos: List[Dict[str, Any]], num_shards: int, shard_idx: int
+                      ) -> List[Dict[str, Any]]:
+    """Keep only the WHOLE episodes assigned to this shard. Sharding by episode (not by
+    frame index) is what makes parallel generation safe: prev_reverse -- the gear-change
+    signal -- is looked up within an episode, so splitting an episode would corrupt
+    shift_gear detection at the boundary. Deterministic: episodes are sorted, then split
+    into num_shards contiguous groups, so shard k is the same set on every run."""
+    if not (0 <= shard_idx < num_shards):
+        raise SystemExit(f"--shard-idx {shard_idx} out of range for --num-shards {num_shards}")
+    episodes = sorted({i["scene_token"] for i in infos})
+    keep = set(np.array_split(np.array(episodes, dtype=object), num_shards)[shard_idx])
+    return [i for i in infos if i["scene_token"] in keep]
+
+
 def _load_uniad_pth(features_dir: str, token: str):
     """Load one frame's decoded-UniAD .pth (from extract_uniad_features.py). Returns
     None when the file is absent — treated as 'perception saw nothing this frame',
@@ -184,6 +198,8 @@ def generate(
     uniad_features_dir: Optional[str] = None,
     uniad_score_thr: float = 0.3,
     counterfactuals: bool = False,
+    num_shards: int = 1,
+    shard_idx: int = 0,
     **teacher_kwargs,
 ) -> Dict[str, Any]:
     out_dir = pathlib.Path(out_dir)
@@ -195,7 +211,10 @@ def generate(
                             # failed run (e.g. --source uniad) leaves nothing behind.
 
     infos = _load_infos(infos_path)
-    by_token = _index(infos)
+    by_token = _index(infos)              # FULL index: history/prev lookups must resolve
+                                          # even when this job only generates one shard.
+    if num_shards > 1:
+        infos = _shard_by_episode(infos, num_shards, shard_idx)
     if limit is not None:
         infos = infos[:limit]
 
@@ -315,6 +334,8 @@ def generate(
         "infos": str(infos_path),
         "limit": limit,
         "coordinate_convention": COORD_CONVENTION,
+        "shard": {"num_shards": num_shards, "shard_idx": shard_idx,
+                  "episodes": len({r["scene_token"] for r in trace_records})},
         "counts": {"frames": n, "counterfactual_pairs": len(cf_pairs),
                    # Frames the teacher could not verbalize cleanly, which fell back to the
                    # (template) mock. Should be ~0. If it is not, READ fallback_examples
@@ -363,6 +384,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--counterfactuals", action="store_true",
                     help="also generate stop-injection pairs. OFF by default: deferred to "
                          "v2, not fed to training, and one unverbalizable frame kills the run")
+    # Episode-level sharding for the full 62k run: launch N jobs, one per shard, into
+    # sibling out dirs, then scripts/merge_reasoning_shards.py. Whole episodes only.
+    ap.add_argument("--num-shards", type=int, default=1)
+    ap.add_argument("--shard-idx", type=int, default=0)
     # QwenVerbalizer config (unused for --teacher mock); drops into an sbatch wrapper.
     ap.add_argument("--qwen-model-path", default=None)
     ap.add_argument("--qwen-endpoint", default=None)
@@ -386,6 +411,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         uniad_features_dir=args.uniad_features_dir,
         uniad_score_thr=args.uniad_score_thr,
         counterfactuals=args.counterfactuals,
+        num_shards=args.num_shards,
+        shard_idx=args.shard_idx,
         **teacher_kwargs,
     )
     print(json.dumps(manifest, indent=2))
