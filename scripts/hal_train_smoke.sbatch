@@ -41,7 +41,7 @@ srun singularity exec --nv \
   --env PYTHONPATH="$REPO/OpenDriveVLA" \
   --env UNIAD_CKPT="$UNIAD_CKPT" \
   --env CACHED_DATA_PATH="$PROC/cached_parking_info.pkl" \
-  --env CARLA_DATA_ROOT="$STAGING/data_carla" \
+  --env CARLA_DATA_ROOT="$REPO/data_carla" \
   --env NUSC_DATA_ROOT="$REPO/data/nuscenes" \
   --env TRITON_CACHE_DIR="/tmp/triton_${SLURM_JOB_ID}" \
   --env LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/.singularity.d/libs:/usr/local/cuda/lib64 \

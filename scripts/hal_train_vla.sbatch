@@ -70,7 +70,7 @@ srun singularity exec --nv \
   --env REASONING_TRACES="$REASONING_TRACES" \
   --env REASON_GATE="$REASON_GATE" \
   --env CACHED_DATA_PATH="$PROC/cached_parking_info.pkl" \
-  --env CARLA_DATA_ROOT="$STAGING/data_carla" \
+  --env CARLA_DATA_ROOT="$REPO/data_carla" \
   --env NUSC_DATA_ROOT="$REPO/data/nuscenes" \
   --env TRITON_CACHE_DIR="/tmp/triton_${SLURM_JOB_ID}" \
   --env LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/.singularity.d/libs:/usr/local/cuda/lib64 \
