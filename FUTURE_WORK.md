@@ -90,6 +90,24 @@ cache) should be built before the Step-8 causality numbers are published.
 
 **Trigger:** before running the final Step-8 ablation suite.
 
+## 3c. Weather / road-surface as a causal factor (ASK THE CARLA AGENT)
+
+CARLA writes a balanced `weather` preset per episode (10 classes) and it never enters the
+model. We deliberately keep it OUT of the causal trace, because **we have no evidence the
+GT trajectory depends on it** — the A* planner and controller appear blind to weather, so
+wet-vs-dry episodes would carry identical trajectories, and a "wet road, so drive carefully"
+clause would train the model that reasoning can be decoupled from action (Alpamayo's
+"superficial reasoning").
+
+**Open question for the CARLA-agent side:** does the ground-truth controller actually change
+behaviour on wet/low-friction surfaces (slower approach, longer stopping, gentler steer)? If
+YES, then wet-road IS causal and, exactly like Alpamayo, it belongs in the trace — add a
+grounded `manner` fact (e.g. `low_traction`) from the weather preset. If NO, it stays out.
+
+**Trigger:** confirm with the CARLA data owner whether weather affects the GT maneuver.
+Most relevant when we move to real driving data, where surface friction is unquestionably
+causal. Until proven, do not add it.
+
 ## 4. Colour / appearance in the reasoning
 
 The model DOES see colour: `<SCENE>` is the 6-camera RGB backbone features

@@ -83,6 +83,24 @@ def test_grounded_manner_facts_present_and_clean(tmp_path):
         assert manifest["validator_pass_rates"][name] == 1.0, name
 
 
+def test_setup_forward_manner_does_not_trip_the_guard():
+    """The rich run fell back 8/50 on `approach`: the setup_forward phrase said "reverse",
+    which reads as a wrong-action claim on an approach frame. The phrase must carry Q3's
+    meaning without a decision word, and a faithful approach trace must not need the literal
+    word "approach"."""
+    from reasoning_data_gen.schema import EntityRef, FactRecord, manner_ref
+    from reasoning_data_gen.verbalizer import _MANNER_PHRASE, find_hallucinations
+    assert "reverse" not in _MANNER_PHRASE["setup_forward"]
+    fact = FactRecord(decision="approach", causal_factors=[
+        EntityRef(kind="slot", name="free", r=-1.0, f=5.0), manner_ref("setup_forward")])
+    for t in ("I'll pull forward first to set up my angle for the clear slot on my left.",
+              "Pulling forward to get into position for the parking maneuver."):
+        assert find_hallucinations(t, fact) == [], t
+    # a genuine wrong-action claim is still caught
+    rev = FactRecord(decision="reverse", causal_factors=[])
+    assert find_hallucinations("I have completed the park.", rev) != []
+
+
 def test_counterfactuals_are_opt_in(tmp_path):
     """The machinery still works when explicitly asked for -- it is deferred, not deleted."""
     out = tmp_path / "v0_cf"
