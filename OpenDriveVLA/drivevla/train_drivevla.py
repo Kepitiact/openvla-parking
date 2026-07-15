@@ -469,8 +469,10 @@ def main():
     model.gradient_checkpointing_enable()
 
     trainable, total = count_trainable(model)
+    lora_desc = (f"LoRA rank={args.lora_rank} on {','.join(target_modules)}"
+                 if use_lora else "no LoRA (align stage)")
     log.info(f"Parameters: {trainable/1e6:.2f}M trainable / {total/1e6:.1f}M total "
-             f"(LoRA rank={args.lora_rank} on {','.join(target_modules)})")
+             f"({lora_desc})")
 
     # Dataset
     uniad_cfg = Config.fromfile(args.uniad_config)
