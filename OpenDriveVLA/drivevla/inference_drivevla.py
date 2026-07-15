@@ -21,6 +21,7 @@ from data_utils.nuscenes_llava_dataset import LLaVANuScenesDataset
 from data_utils.nuscenes_llava_datacollector import DataCollatorForLLaVANuScenesDataset
 
 from utils.tensor_utils import move_data_to_device
+from utils.trajectory_utils import split_reason_traj
 from data_utils.nuscenes_llava_distributed_sampler import ContinuousSceneDistributedSampler
 
 def read_processed_ids(output_file):
@@ -147,11 +148,22 @@ def inference_data(data, model_engine, tokenizer, args):
             #     num_beams=1,
             # )
 
-    answer = tokenizer.batch_decode(cont, skip_special_tokens=True)
+    # Keep the delimiters: skip_special_tokens=True would strip <traj_start>/<traj_end>,
+    # and the reasoning text (full of digits like "5.7 m") would then be parsed as
+    # waypoints. Split reason from trajectory, and store the TRAJ span as `answer` so the
+    # downstream retrieve_traj never sees the reasoning's numbers. Reasoning is kept for the
+    # faithfulness eval.
+    decoded = tokenizer.batch_decode(cont, skip_special_tokens=False)
+    reasoning, answer = [], []
+    for seq in decoded:
+        r, t = split_reason_traj(seq)
+        reasoning.append(r)
+        answer.append(t)
     result = {
         'id': id,
         'question': question,
-        'answer': answer
+        'answer': answer,
+        'reasoning': reasoning,
     }
     return result
 
