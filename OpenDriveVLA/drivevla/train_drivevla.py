@@ -57,6 +57,10 @@ def parse_args():
     ap.add_argument("--save-steps", type=int, default=0,
                     help="Also save resumable state every N optimizer steps (mid-epoch). "
                          "0 disables; only per-epoch state is saved.")
+    ap.add_argument("--max-steps", type=int, default=0,
+                    help="Smoke test: stop after N optimizer steps (0 = full training). "
+                         "Exercises the real collator + UniAD features + gate mask on real "
+                         "batch shapes without committing to a full epoch.")
     ap.add_argument("--batch-size", type=int, default=1,
                     help="Micro-batch per GPU. The UniAD collator supports only 1; scale "
                          "throughput via --num-workers, --grad-accum and multi-GPU, not this.")
@@ -621,6 +625,11 @@ def main():
 
             n_batches += 1
 
+            if args.max_steps and global_step >= args.max_steps:
+                log.info(f"  --max-steps {args.max_steps} reached: smoke test done, "
+                         f"stopping. avg_loss={epoch_loss / max(1, n_batches):.4f}")
+                break
+
             if (step + 1) % 50 == 0 and is_main:
                 avg = epoch_loss / n_batches
                 lr_now = scheduler.get_last_lr()[0]
@@ -635,6 +644,9 @@ def main():
                     {"epoch": epoch, "global_step": global_step,
                      "batch_in_epoch": step + 1, "epoch_done": False},
                     model, optimizer, scheduler, scaler, accelerator, is_main, log)
+
+        if args.max_steps and global_step >= args.max_steps:
+            break   # smoke test: don't roll into another epoch
 
         avg_loss = epoch_loss / max(1, n_batches)
         log.info(f"Epoch {epoch}/{args.num_epochs} - avg_loss={avg_loss:.4f} "
