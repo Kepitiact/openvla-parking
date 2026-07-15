@@ -108,6 +108,26 @@ grounded `manner` fact (e.g. `low_traction`) from the weather preset. If NO, it 
 Most relevant when we move to real driving data, where surface friction is unquestionably
 causal. Until proven, do not add it.
 
+## 3d. Consolidate the data layout (post-v1 cleanup)
+
+Data is split across two roots today: infos + conversations + cached_parking_info in the
+REPO (/workspaces), features + reasoning traces on STAGING. Worse, TWO code paths resolve
+the infos differently -- `carla_parking.py` uses `CARLA_DATA_ROOT`, `carla_parking_stage1.py`
+uses a getcwd-based `_REPO`. That duplication caused the smoke's third crash (CARLA_DATA_ROOT
+pointed at staging where infos don't live).
+
+**Correct structure:** repo = code + config; ALL data under one root on staging, one env var.
+- prep writes infos/conversations/cached to staging alongside the features.
+- single `CARLA_DATA_ROOT` (staging), used by every config -- delete the `_REPO`/getcwd path.
+- one source of truth for "where is the data".
+
+**Why not now:** it is a refactor, not a fix (each file move needs its own verification), and
+the working setup (CARLA_DATA_ROOT -> repo) is fine for v1. Doing it mid-flight, right before
+the 8xA100 run, risks a new path bug at the worst time. The quota is not forcing it (~5.5 GB
+of infos vs a ~100 GB workspace).
+
+**Trigger:** after v1 trains, as a deliberate cleanup pass.
+
 ## 4. Colour / appearance in the reasoning
 
 The model DOES see colour: `<SCENE>` is the 6-camera RGB backbone features
