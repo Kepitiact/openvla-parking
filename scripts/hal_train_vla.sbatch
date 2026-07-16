@@ -19,7 +19,10 @@
 # UNIAD_CKPT -- our backbone carries no baked tower weights, by construction.
 #SBATCH --job-name=train_vla
 #SBATCH --partition=zprod
-#SBATCH --gres=gpu:8
+# 4 GPUs, not 8: zprod is saturated and a full 8-GPU node had a ~3-day queue estimate,
+# while 4 backfills onto a partially-used node almost immediately. ~2x wall time (align
+# ~3.4h, finetune ~12h) is a good trade vs waiting days. Bump back to gpu:8 if zprod frees.
+#SBATCH --gres=gpu:4
 #SBATCH --time=48:00:00
 #SBATCH --output=/workspaces/s0002438/openvla-parking/checkpoints/train_vla_%j.log
 
@@ -76,7 +79,7 @@ srun singularity exec --nv \
   --env LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/.singularity.d/libs:/usr/local/cuda/lib64 \
   --env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   "$SIF" \
-  torchrun --nproc_per_node=8 --master_port=29501 \
+  torchrun --nproc_per_node="${SLURM_GPUS_ON_NODE:-4}" --master_port=29501 \
     drivevla/train_drivevla.py \
       --model-path "$MODEL" \
       --stage "$STAGE" \

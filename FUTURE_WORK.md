@@ -128,6 +128,26 @@ of infos vs a ~100 GB workspace).
 
 **Trigger:** after v1 trains, as a deliberate cleanup pass.
 
+## 3e. RL for reasoning-action consistency (post-v1, Alpamayo path)
+
+Our gate is a TRAINING-TIME ARCHITECTURAL mechanism: block the trajectory's direct view of
+perception so it must route through reasoning. Alpamayo (2511.00088) reaches the same goal
+differently -- a trajectory decoder CONDITIONED on the reasoning, plus an RL stage that
+rewards reasoning-action CONSISTENCY (punishes a trajectory that disagrees with its stated
+reasoning). SFT elicits the reasoning; RL enforces that it is actually used.
+
+**Why it matters for us:** the gate proves reasoning is a *channel* (ablate it -> trajectory
+breaks), but it does not directly pressure the reasoning to be *semantically correct* -- the
+gated positions could carry useful activations while the surface text drifts. An RL
+consistency reward targets exactly that gap, and it survives an architecture change (it is a
+training objective, not a mask). If v2 moves toward the Alpamayo architecture, the gate goes
+away but this reward is the thing that replaces its guarantee.
+
+**Trigger:** after the first model's eval. Decide based on whether the gated model's traces
+are faithful (validators on student output) AND causally used (ablation). If faithful+used,
+the gate sufficed for v1; if the text drifts from the trajectory, RL consistency is the
+next lever. This is the main v2 architecture direction.
+
 ## 4. Colour / appearance in the reasoning
 
 The model DOES see colour: `<SCENE>` is the 6-camera RGB backbone features
