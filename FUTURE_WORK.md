@@ -48,15 +48,24 @@ factual/counterfactual data for the Step-8 swap/disable gates.
 `REASON_GATE` currently defaults to `track` — only the decoded objects are forced through
 the reasoning.
 
-**Why map is not gated yet:** the map head is **completely unverified**.
-`scripts/uniad_stage1_metrics.py` scores **detection only** (the 0.802 recall is
-cars/trucks/pedestrians). The CARLA "stuff" mask is hardcoded to zeros
-(`nuscenes_e2e_dataset.py:503`), though real lot geometry *is* loaded as "things" via
-`CarlaVectorMap`. **Map/seg quality has never been measured, not once.** Gating a stream we
-cannot show is meaningful is not a real experiment.
+**Why map is not gated yet — now measured (seg loss curve, stage1 training logs):**
+| stream | loss start -> end | verdict |
+|---|---|---|
+| detection (loss_cls) | 0.82 -> 0.027 | strong (matches 0.80 recall) |
+| map / things-seg (lot geometry) | 1.82 -> 0.58 | LEARNED, but weak -- large residual vs detection |
+| map / stuff-seg | 0.0343, flat | DEAD -- the CARLA "stuff" mask is hardcoded to zeros (`nuscenes_e2e_dataset.py:503`) |
 
-**Do first:** measure the map head (check the seg loss curve; render predicted lane/lot
-geometry against `lot_map_gt_Town04_Opt.json`). **Then** turn on `REASON_GATE=track,map`.
+So the map head is not dead: things-seg (lot geometry via `CarlaVectorMap`) dropped ~68%, so
+it learned *something*. But (a) its residual is far higher than detection, so the geometry is
+coarse, and (b) the reasoning does not verbalize map content, so gating map would force a
+weak, un-relayed stream through the reasoning -- deleting info with nothing to carry it. Keep
+map ungated for v1.
+
+**Still open (needs a GPU slot):** the loss curve says "learned moderately" but not "how
+good." Render predicted lane/lot geometry from the seg DECODER against
+`lot_map_gt_Town04_Opt.json` (IoU) -- the saved features are query embeddings, not polygons,
+so this needs a UniAD forward pass, not just the .pth files. **Then** decide on
+`REASON_GATE=track,map`.
 
 **Note on scene (important, and a correction to an earlier claim):** gating `scene` does NOT
 destroy the camera information. The reasoning TOKENS keep full attention to perception; only
