@@ -19,10 +19,12 @@
 # UNIAD_CKPT -- our backbone carries no baked tower weights, by construction.
 #SBATCH --job-name=train_vla
 #SBATCH --partition=zprod
-# 4 GPUs, not 8: zprod is saturated and a full 8-GPU node had a ~3-day queue estimate,
-# while 4 backfills onto a partially-used node almost immediately. ~2x wall time (align
-# ~3.4h, finetune ~12h) is a good trade vs waiting days. Bump back to gpu:8 if zprod frees.
-#SBATCH --gres=gpu:4
+# 8 GPUs on zprod: the queue wait is driven by the zprodhigh priority tier holding the
+# nodes, not by GPU count (4 vs 8 gave the same estimate), and zprodhigh is reserved for
+# production/urgent work -- not ours to use. So wait on zprod and keep 8 GPUs for the
+# shorter run (align ~1.7h, finetune ~6h) once it schedules. --nproc_per_node below tracks
+# whatever is allocated, so this is the only line to change for a different GPU count.
+#SBATCH --gres=gpu:8
 #SBATCH --time=48:00:00
 #SBATCH --output=/workspaces/s0002438/openvla-parking/checkpoints/train_vla_%j.log
 
