@@ -336,7 +336,9 @@ def main():
     # Set multiprocessing start method
     mp.set_start_method("spawn", force=True)
 
-    model_path_default = "checkpoints/DriveVLA-Qwen2.5-0.5B-Instruct"
+    # The trained reasoning-VLA (align -> finetune output). Always pass --model-path
+    # explicitly; this default just points at the current 3B lineage, not the retired 0.5B.
+    model_path_default = "checkpoints/DriveVLA-3B-reason"
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default=model_path_default)
