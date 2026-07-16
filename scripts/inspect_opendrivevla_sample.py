@@ -130,6 +130,16 @@ def load_prediction_map(predictions_path: Path | None) -> dict[str, dict]:
 
 
 def parse_trajectory_text(text: str) -> list[tuple[float, float]]:
+    # Isolate the trajectory span first. The reasoning-VLA emits
+    # <reason_start>…<reason_end><traj_start>[(x,y,h)…]<traj_end>, and the reasoning text
+    # contains digits ("about 5.7 m") that the tuple regex would otherwise read as
+    # waypoints. If <traj_start> is present, parse ONLY inside it; strip any reason block
+    # otherwise. A bare trajectory string (older/trajectory-only output) is unaffected.
+    m = re.search(r"<traj_start>(.*?)<traj_end>", text, re.S)
+    if m:
+        text = m.group(1)
+    else:
+        text = re.sub(r"<reason_start>.*?<reason_end>", "", text, flags=re.S)
     # Waypoints are (x, y, heading) 3-tuples; the optional heading keeps this
     # backward-compatible with older 2-tuple prediction files. Plots use x, y only.
     pairs = re.findall(
