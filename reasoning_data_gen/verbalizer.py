@@ -151,11 +151,26 @@ def find_hallucinations(trace: str, fact: FactRecord) -> List[str]:
     # `decision` field; the trace only has to avoid CONTRADICTING it. A genuine wrong-action
     # claim ("I have completed the park" when the decision is reverse) still names a
     # conflicting decision and is still caught.
+    # Some decisions SUBSUME a smaller one as a component, so naming that component is not
+    # a contradiction even if the umbrella decision is not stated. Completing a park IS
+    # being aligned at the slot; reversing into a bay IS an alignment maneuver. The 32B
+    # naturally describes complete_park as "nicely aligned in the slot" without the word
+    # "parked" -- that was 694 of 696 fallbacks (48.8% of complete_park), all correct traces
+    # the guard wrongly rejected. `align` is the only sub-component in play here.
+    subsumed = _SUBSUMES_DECISION.get(fact.decision, frozenset())
     mentioned = extract_decision_mentions(trace)
     if fact.decision not in mentioned:
         for d in mentioned:
-            problems.append(f"decision:{d}")
+            if d not in subsumed:
+                problems.append(f"decision:{d}")
     return problems
+
+
+# decision -> sub-decisions that are components of it, not contradictions of it.
+_SUBSUMES_DECISION = {
+    "complete_park": frozenset({"align"}),
+    "reverse": frozenset({"align"}),
+}
 
 
 # Master (system) prompt — CONSTANT across every frame. Encodes the teacher's role

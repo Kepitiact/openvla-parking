@@ -83,6 +83,18 @@ def test_grounded_manner_facts_present_and_clean(tmp_path):
         assert manifest["validator_pass_rates"][name] == 1.0, name
 
 
+def test_complete_park_subsumes_align():
+    """694/696 full-run fallbacks were complete_park traces the 32B wrote as 'nicely aligned
+    in the slot' -- align is a COMPONENT of completing a park, not a contradiction. It must
+    pass; a truly different action must still be caught."""
+    from reasoning_data_gen.schema import EntityRef, FactRecord
+    from reasoning_data_gen.verbalizer import find_hallucinations
+    cp = FactRecord(decision="complete_park", causal_factors=[
+        EntityRef(kind="slot", name="free", r=-0.5, f=0.3)])
+    assert find_hallucinations("I'm nicely aligned in the slot now.", cp) == []
+    assert find_hallucinations("I am reversing into it.", cp) != []   # real conflict, caught
+
+
 def test_setup_forward_manner_does_not_trip_the_guard():
     """The rich run fell back 8/50 on `approach`: the setup_forward phrase said "reverse",
     which reads as a wrong-action claim on an approach frame. The phrase must carry Q3's
