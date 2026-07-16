@@ -64,12 +64,12 @@ Two-step HAL flow (see the sbatch headers):
 # 1. GPU: decode UniAD -> per-frame .pth (existing script, with the UniAD weights, e.g. epoch4)
 #    drivevla/extract_uniad_features.py  ->  <staging>/.../uniad_features/<token>.pth
 # 2. CPU: sanity-check the conversion on ~10 episodes with the mock teacher
-sbatch scripts/hal_reason_uniad_convert.sbatch \
+sbatch scripts/sbatch/hal_reason_uniad_convert.sbatch \
   --infos <staging>/.../parking_infos_val.pkl \
   --uniad-features-dir <staging>/.../uniad_features \
   --out <staging>/.../reasoning/v0_uniad_convert --limit 400
 # 3. GPU: the real UniAD-grounded Qwen pass
-sbatch scripts/hal_reason_qwen.sbatch --source uniad \
+sbatch scripts/sbatch/hal_reason_qwen.sbatch --source uniad \
   --uniad-features-dir <staging>/.../uniad_features --infos ... --out ...
 ```
 
@@ -116,7 +116,7 @@ one 40 GB A100), `QWEN_BATCH_SIZE`. Run it with:
 
 ```bash
 # fit-check on ztest (2 GPUs, 45 min); outputs land on /staging (NOT the workspace quota)
-sbatch scripts/hal_reason_qwen.sbatch \
+sbatch scripts/sbatch/hal_reason_qwen.sbatch \
   --infos <staging>/data_carla/processed/parking_infos_train.pkl \
   --out   <staging>/data_carla/processed/reasoning/v1_qwen_gt \
   --limit 50

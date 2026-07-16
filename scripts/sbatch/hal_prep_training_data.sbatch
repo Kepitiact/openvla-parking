@@ -10,9 +10,9 @@
 # Neither exists on HAL. No GPU needed. Run it WHILE the feature extraction is going.
 #
 # Submit:
-#   sbatch scripts/hal_prep_training_data.sbatch
+#   sbatch scripts/sbatch/hal_prep_training_data.sbatch
 # Then AFTER extraction finishes, stamp the feature paths in:
-#   sbatch scripts/hal_prep_training_data.sbatch --stamp-only
+#   sbatch scripts/sbatch/hal_prep_training_data.sbatch --stamp-only
 #SBATCH --job-name=prep_train_data
 #SBATCH --partition=zprodcpu
 #SBATCH --time=06:00:00

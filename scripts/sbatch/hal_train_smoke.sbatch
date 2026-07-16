@@ -11,7 +11,7 @@
 # ztest + gpu:2, so it runs in parallel with the teacher shards on zprod (no contention).
 #
 # Submit:
-#   sbatch scripts/hal_train_smoke.sbatch
+#   sbatch scripts/sbatch/hal_train_smoke.sbatch
 # PASS = it reaches "--max-steps 30 reached: smoke test done" with a finite, decreasing loss
 # and writes a checkpoint, with no collator/feature/gate crash.
 #SBATCH --job-name=train_smoke

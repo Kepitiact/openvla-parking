@@ -7,7 +7,7 @@
 # counts are never computed on a fragment. A failed shard re-runs alone.
 #
 # Submit (SHARDS must match --array range: 0-5 => 6 shards):
-#   sbatch scripts/hal_reason_qwen_full.sbatch
+#   sbatch scripts/sbatch/hal_reason_qwen_full.sbatch
 # Watch:
 #   squeue --me
 #   tail -f /workspaces/s0002438/openvla-parking/reason_full_<jobid>_<shard>.log

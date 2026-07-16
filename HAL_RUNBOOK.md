@@ -60,10 +60,10 @@ No env-var overrides needed: the config's `_REPO = parent(CWD)`, and running wit
 CWD=`OpenDriveVLA/` makes all default paths resolve (`data/nuscenes`, `data_carla`,
 `ckpts/uniad_base_track_map.pth`).
 
-## 4. Smoke test on a GPU (`scripts/hal_smoke_test.sbatch`)
+## 4. Smoke test on a GPU (`scripts/sbatch/hal_smoke_test.sbatch`)
 
 ```bash
-sbatch scripts/hal_smoke_test.sbatch --tiny        # ztest A100-40GB, 45-min queue
+sbatch scripts/sbatch/hal_smoke_test.sbatch --tiny        # ztest A100-40GB, 45-min queue
 squeue --me ; tail -f smoke_<jobid>.log
 ```
 Key runtime flags baked into the sbatch:
@@ -79,7 +79,7 @@ Key runtime flags baked into the sbatch:
 
 ## Status: ENV VALIDATED + STAGE-1 TRAINING RESTORED ✅
 
-`sbatch scripts/hal_smoke_test.sbatch --tiny` completes a **full training step**
+`sbatch scripts/sbatch/hal_smoke_test.sbatch --tiny` completes a **full training step**
 (forward → loss → backward → optimizer) on a HAL A100 inside the container:
 `SMOKE TEST (full fwd/bwd) PASSED.` (total loss ~42, 67 `track.*`+`map.*` terms).
 Proven: all imports + compiled `mmcv.ops` + `deepspeed` nvcc probe, mmdet3d CUDA ops,

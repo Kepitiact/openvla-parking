@@ -9,7 +9,7 @@
 # NB the asymmetry, and it is not a typo:
 #   infos  live in the REPO      (/workspaces/.../data_carla/processed) -- ~5 GB, fine there
 #   output goes to STAGING       (78 GB would blow the ~100 GB workspace quota)
-#   sbatch scripts/hal_extract_features.sbatch \
+#   sbatch scripts/sbatch/hal_extract_features.sbatch \
 #     /workspaces/s0002438/openvla-parking/data_carla/processed/parking_infos_train.pkl \
 #     /staging/short_range_perception/s0002438/openvla_parking/data_carla/processed/uniad_features
 #
@@ -36,8 +36,8 @@ REPO=/workspaces/s0002438/openvla-parking
 SIF=/workspaces/s0002438/openvla.sif
 STAGING=/staging/short_range_perception/s0002438/openvla_parking
 
-INFOS=${1:?usage: sbatch scripts/hal_extract_features.sbatch <infos.pkl> <out-dir> [ckpt]}
-OUTDIR=${2:?usage: sbatch scripts/hal_extract_features.sbatch <infos.pkl> <out-dir> [ckpt]}
+INFOS=${1:?usage: sbatch scripts/sbatch/hal_extract_features.sbatch <infos.pkl> <out-dir> [ckpt]}
+OUTDIR=${2:?usage: sbatch scripts/sbatch/hal_extract_features.sbatch <infos.pkl> <out-dir> [ckpt]}
 CKPT=${3:-$REPO/checkpoints/stage1_carla_full/epoch_6.pth}   # the final trained model
 CONFIG=projects/configs/stage1_track_map/carla_parking_stage1.py
 

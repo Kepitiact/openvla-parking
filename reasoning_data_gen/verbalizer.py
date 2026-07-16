@@ -199,7 +199,7 @@ class QwenVerbalizer(Verbalizer):
     only rewords the fact; every candidate passes find_hallucinations and is
     regenerated on any violation. Never invoked in Step 0 (no GPU in CI).
 
-    Config from args/env so it drops into scripts/hal_reason_qwen.sbatch unchanged:
+    Config from args/env so it drops into scripts/sbatch/hal_reason_qwen.sbatch unchanged:
       QWEN_MODEL_PATH   local weights dir (transformers backend), or
       QWEN_ENDPOINT     OpenAI-compatible chat endpoint (e.g. a vLLM server on HAL)
       QWEN_MODEL_NAME   model name to send to the endpoint

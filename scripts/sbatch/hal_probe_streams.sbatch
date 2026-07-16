@@ -11,7 +11,7 @@
 # CPU only. No GPU, no training, and no label here ever enters the model.
 #
 # Submit (after extraction finishes):
-#   sbatch scripts/hal_probe_streams.sbatch
+#   sbatch scripts/sbatch/hal_probe_streams.sbatch
 #SBATCH --job-name=probe_streams
 #SBATCH --partition=zprodcpu
 #SBATCH --time=02:00:00

@@ -4,10 +4,10 @@
 # queue_length is passed as the FIRST script argument (default 5). Do NOT use
 # --export=ALL,QL=... on this cluster: it triggers "user env retrieval failed".
 # Memory fit check first (free 45-min queue), queue_length=5:
-#   sbatch -p ztest -t 00:40:00 scripts/hal_train_stage1.sbatch 5
+#   sbatch -p ztest -t 00:40:00 scripts/sbatch/hal_train_stage1.sbatch 5
 #   # watch a few iters; if CUDA OOM, resubmit with arg 3.
 # Real run (zprod, resumable across preemption):
-#   sbatch scripts/hal_train_stage1.sbatch 5      # or: ... 3  (if 40GB needs it)
+#   sbatch scripts/sbatch/hal_train_stage1.sbatch 5      # or: ... 3  (if 40GB needs it)
 #
 #SBATCH --job-name=uniad_stage1
 #SBATCH --partition=zprod

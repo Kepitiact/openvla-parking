@@ -7,8 +7,8 @@
 # only path from perception to waypoints runs THROUGH the reasoning.
 #
 # Two stages -- run align first, then finetune from its output:
-#   sbatch scripts/hal_train_vla.sbatch align
-#   sbatch scripts/hal_train_vla.sbatch finetune
+#   sbatch scripts/sbatch/hal_train_vla.sbatch align
+#   sbatch scripts/sbatch/hal_train_vla.sbatch finetune
 #
 #   align     LLM frozen, no LoRA. Only the projectors and the two NEW reasoning-token
 #             embeddings train, so UniAD's features learn to land in Qwen's residual
@@ -30,7 +30,7 @@
 
 set -euo pipefail
 
-STAGE=${1:?usage: sbatch scripts/hal_train_vla.sbatch <align|finetune> [epochs]}
+STAGE=${1:?usage: sbatch scripts/sbatch/hal_train_vla.sbatch <align|finetune> [epochs]}
 EPOCHS=${2:-}
 
 REPO=/workspaces/s0002438/openvla-parking

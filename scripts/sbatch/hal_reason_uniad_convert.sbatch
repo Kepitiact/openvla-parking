@@ -13,7 +13,7 @@
 #   (each .pth already carries result_track.detections; see extract_uniad_features.py).
 #
 # Then submit (args pass through to run_generate):
-#   sbatch scripts/hal_reason_uniad_convert.sbatch \
+#   sbatch scripts/sbatch/hal_reason_uniad_convert.sbatch \
 #     --infos <staging>/data_carla/processed/parking_infos_val.pkl \
 #     --uniad-features-dir <staging>/data_carla/processed/uniad_features \
 #     --out   <staging>/data_carla/processed/reasoning/v0_uniad_convert --limit 400

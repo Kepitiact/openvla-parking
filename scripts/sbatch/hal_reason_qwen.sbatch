@@ -8,7 +8,7 @@
 #   --infos                the infos pkls live in the REPO   (/workspaces/.../data_carla/processed)
 #   --uniad-features-dir   the 78 GB of features are on STAGING
 #   --out                  generated data MUST go to STAGING (workspace quota kills running jobs)
-#   sbatch scripts/hal_reason_qwen.sbatch \
+#   sbatch scripts/sbatch/hal_reason_qwen.sbatch \
 #     --source uniad \
 #     --uniad-features-dir /staging/short_range_perception/s0002438/openvla_parking/data_carla/processed/uniad_features \
 #     --infos /workspaces/s0002438/openvla-parking/data_carla/processed/parking_infos_train.pkl \

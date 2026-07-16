@@ -7,7 +7,7 @@
 # base weights, adds the 22 special tokens + 3 fresh projectors, and saves. No GPU.
 #
 # Submit:
-#   sbatch scripts/hal_init_backbone.sbatch
+#   sbatch scripts/sbatch/hal_init_backbone.sbatch
 # Produces: checkpoints/DriveVLA-Qwen2.5-3B-init  (then re-run the smoke)
 #SBATCH --job-name=init_backbone
 #SBATCH --partition=zprodcpu

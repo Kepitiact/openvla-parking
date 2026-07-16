@@ -272,7 +272,7 @@ def main():
 
     if args.num_shards > 1:
         # Every shard would read-modify-write the same JSON concurrently and corrupt it.
-        # Stamp once, after all shards finish (see scripts/hal_extract_features.sbatch).
+        # Stamp once, after all shards finish (see scripts/sbatch/hal_extract_features.sbatch).
         print(f"[shard {args.shard_idx}] skipping conversations stamping (sharded run); "
               "stamp once after all shards complete.")
     elif args.conversations and os.path.exists(args.conversations):
