@@ -200,7 +200,6 @@ def generate(
     counterfactuals: bool = False,
     num_shards: int = 1,
     shard_idx: int = 0,
-    only_tokens: Optional[set] = None,   # TASK-ONLY (complete_park fallback regen); remove after
     **teacher_kwargs,
 ) -> Dict[str, Any]:
     out_dir = pathlib.Path(out_dir)
@@ -216,8 +215,6 @@ def generate(
                                           # even when this job only generates one shard.
     if num_shards > 1:
         infos = _shard_by_episode(infos, num_shards, shard_idx)
-    if only_tokens is not None:   # TASK-ONLY: regenerate just these frames; remove after
-        infos = [i for i in infos if i["token"] in only_tokens]
     if limit is not None:
         infos = infos[:limit]
 
@@ -391,9 +388,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     # sibling out dirs, then scripts/merge_reasoning_shards.py. Whole episodes only.
     ap.add_argument("--num-shards", type=int, default=1)
     ap.add_argument("--shard-idx", type=int, default=0)
-    # TASK-ONLY (complete_park fallback regen): a file of tokens, one per line, to
-    # regenerate. Delete this arg + the only_tokens plumbing once the regen is done.
-    ap.add_argument("--only-tokens", default=None)
     # QwenVerbalizer config (unused for --teacher mock); drops into an sbatch wrapper.
     ap.add_argument("--qwen-model-path", default=None)
     ap.add_argument("--qwen-endpoint", default=None)
@@ -419,7 +413,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         counterfactuals=args.counterfactuals,
         num_shards=args.num_shards,
         shard_idx=args.shard_idx,
-        only_tokens=(set(open(args.only_tokens).read().split()) if args.only_tokens else None),
         **teacher_kwargs,
     )
     print(json.dumps(manifest, indent=2))
