@@ -6,13 +6,46 @@ evidence rather than rediscovered.
 
 ---
 
+## Priority roadmap (read this first)
+
+The order to act, keyed to what the v1 eval shows. When training + eval finish, start here.
+
+**A. The moment v1 eval lands — required + decision-driven:**
+1. **§3b inference-time gate** — build BEFORE publishing any causality number. NOT optional
+   (train/infer mismatch corrupts the ablation result). Do regardless of the numbers.
+2. **§3 strong-gate A/B** (`track,map,scene` vs `track`) — completes the core experiment.
+3. if trajectory **L2 is poor** → **§6 numeric/regression trajectory head** (Alpamayo's
+   approach). The single most likely architectural upgrade — text digits are a known-bad
+   numeric code.
+4. if traces **drift from the action** (faithful text but the trajectory ignores it) →
+   **§3e RL for reasoning-action consistency** — the main v2 architecture direction.
+5. if traces are **memorised templates** → **§5 perception-QA auxiliary task**.
+
+**B. v2 — the biggest lever (larger effort; plan after A):**
+6. **§1 richer data** (pedestrians / denser lots / moving vehicles) — TOP v2 priority; it is
+   what makes the causality real (today `stop_yield`/`creep` are 0% of frames).
+7. **§2 counterfactuals** — likely made obsolete by §1; only if we still need paired data.
+8. **§3c weather** — pending the CARLA owner's answer on whether it affects the GT.
+9. **§4 colour** — conditional on §1/§5.
+10. **§8 DAgger rebuild** — when DAgger data arrives; route through the main pipeline, do not
+    resurrect the 0.5B DAgger scripts.
+
+**C. Infra / cleanup (post-v1, no dependency — do when convenient):**
+11. **§3d data-layout consolidation** — one data root, kill the dual config path.
+12. **§9 base-VLM swap** — a physical-AI-pretrained VLM (Alpamayo uses Cosmos-Reason); a
+    research consideration, not urgent.
+13. **§7 general-data mixing** — only if the model degrades on general prompts.
+
+---
+
 ## 1. Richer data (the biggest lever)
 
 **Pedestrian-populated episodes + a yielding controller.**
 Today `stop_yield` and `creep` are **0%** of frames — the ego never stops for anything. It
 routes around obstacles via A*, so no example in the entire dataset shows *perception
 changing the trajectory while the ego state stays fixed*. That is why the causality gate is
-data-limited (see §4).
+data-limited — the workaround (§2 counterfactuals) is synthetic and inferior to real
+yielding data.
 
 Collect episodes where a pedestrian crosses and a controller **stops and waits**. Then:
 - `stop_yield` becomes real, with a real trajectory (the car actually stops)
@@ -204,6 +237,13 @@ gradient**, and one mis-sampled digit throws a waypoint metres off.
 switch to a numeric/regression head (the Alpamayo approach), keeping the reasoning as text.
 Do not pre-emptively rebuild the head.
 
+**Not the half-measure (weighting the trajectory tokens higher in the CE):** that makes the
+model care *more* about exact digits but does not fix the root cause — CE still has no
+"closer is better" gradient (`0.2` vs `0.3` costs the same as `0.2` vs `0.9`). If L2 is bad
+enough to act, go straight to the regression head, which is the actual fix. The gate couples
+reasoning ↔ trajectory, so do not over-weight the trajectory to the point the reasoning
+collapses into unreadable code — that breaks the mechanism the project exists to show.
+
 ---
 
 ## 7. General-data mixing
@@ -217,3 +257,44 @@ the embedding matrix is now restricted to the 22 NEW rows (a gradient hook zeroe
 
 **Trigger:** if the model degrades on general prompts, or if its reasoning collapses into a
 handful of memorised strings.
+
+---
+
+## 8. DAgger data path — rebuild against the reasoning-VLA (do NOT fix the old scripts)
+
+`dagger/` is a self-quarantined mini-pipeline built for the OLD 0.5B trajectory-only model
+(`ingest → extract → manifest → train`). It is broken on two levels: (1) the documented 0.5B
+breakage (extraction contract, moved paths, 0.5B train path), and (2) the bigger reasoning-VLA
+gap — it has **no teacher/reasoning step at all** (produces trajectory-only conversations), it
+emits conversations **without the `split` tags** the trainer now requires, and it trains via
+the retired `train_carla_parking.sh`.
+
+**The fix is NOT to repair those scripts.** The main pipeline is now general — it turns *any*
+CARLA episodes into training data. So "bake in DAgger data" = run DAgger episodes through the
+main pipeline (`extract_uniad_features` → `run_generate` teacher traces →
+`build_carla_conversations --split train` → `train_drivevla finetune`, warm-started from v1),
+then blend. The CARLA agent must produce the same infos schema (see the closed-loop handoff)
+and keep `result_track.detections` in the feature `.pth`.
+
+**The one real DAgger-specific decision (recipe, not plumbing):** whether failure frames get
+extra weight / a dedicated round vs. plain blending — that is where the DAgger value (focus on
+failures) actually lives.
+
+**Trigger:** when DAgger data is collected (post-closed-loop testing).
+
+---
+
+## 9. Base VLM choice (physical-AI-pretrained backbone)
+
+We use Qwen2.5-3B-Instruct — a **general text** model. Alpamayo uses **Cosmos-Reason**, a VLM
+pretrained for Physical AI (spatial/embodied reasoning). A physical-AI-pretrained backbone
+could reason about geometry/occupancy better out of the box, which is most of what the
+parking traces are about.
+
+**Why deferred:** it is a backbone swap (rebuild `init`, re-run align/finetune) for an
+uncertain gain, and it is orthogonal to the v1 thesis (reasoning is load-bearing) — that
+result holds regardless of backbone. Revisit only if the trained model's *spatial* reasoning
+is weak (traces get bearings/geometry wrong) despite faithful grounding.
+
+**Trigger:** v1 eval shows spatially-wrong reasoning, or at a scale-up where a stronger
+backbone is warranted. Check whether an open physical-AI VLM fits our 3B compute budget.
