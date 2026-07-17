@@ -13,13 +13,22 @@ The order to act, keyed to what the v1 eval shows. When training + eval finish, 
 **A. The moment v1 eval lands — required + decision-driven:**
 1. **§3b inference-time gate** — build BEFORE publishing any causality number. NOT optional
    (train/infer mismatch corrupts the ablation result). Do regardless of the numbers.
-2. **§3 strong-gate A/B** (`track,map,scene` vs `track`) — completes the core experiment.
+2. **The gate A/B (COMMITTED):** train a second arm **gate-off** (all tokens + reasoning,
+   the field-standard config) alongside v1's `gate=track`, both from the same neutral align.
+   Test BOTH with ablation + **wrong-reasoning injection** (trace-corruption). The gate-off
+   corruption result is the real "is reasoning *naturally* load-bearing?" measurement — on
+   the gated model, ablation is partly tautological. Optionally add the strong end
+   (`track,map,scene`) for the full spectrum.
+   - gate-off breaks under corruption → reasoning load-bearing naturally (strong, field-standard).
+   - gate-off unchanged → reasoning was decorative → Step A5 (RL) is justified.
 3. if trajectory **L2 is poor** → **§6 numeric/regression trajectory head** (Alpamayo's
    approach). The single most likely architectural upgrade — text digits are a known-bad
    numeric code.
-4. if traces **drift from the action** (faithful text but the trajectory ignores it) →
-   **§3e RL for reasoning-action consistency** — the main v2 architecture direction.
-5. if traces are **memorised templates** → **§5 perception-QA auxiliary task**.
+4. if traces are **memorised templates** → **§5 perception-QA auxiliary task**.
+5. **CONDITIONAL on A2** — if gate-off proved decorative (reasoning not naturally used) →
+   **§3e RL for reasoning-action consistency**, the way to make "all tokens + reasoning"
+   load-bearing. Largest-effort item; gate it on the A2 evidence, do not pre-commit. This is
+   the main v2 architecture direction (Alpamayo path).
 
 **B. v2 — the biggest lever (larger effort; plan after A):**
 6. **§1 richer data** (pedestrians / denser lots / moving vehicles) — TOP v2 priority; it is
