@@ -98,6 +98,11 @@ srun singularity exec --nv \
       --bf16 --distributed \
       --lora-rank 64 --lora-alpha 128 \
       --grad-accum 8 --batch-size 1 --num-workers 4 --save-every 1 \
-      --save-steps "${SAVE_STEPS:-2000}"
+      --save-steps "${SAVE_STEPS:-2000}" \
+      ${RESUME:+--resume}
+# RESUME=1 continues from OUT/last_state (the --save-steps checkpoint): resubmit after a
+# time-limit kill / preemption / node failure to pick up where it stopped, or to extend an
+# already-finished run to more epochs. On a first run OUT is empty, so --resume just warns
+# and starts fresh -- but leave RESUME unset the first time to be explicit.
 
 echo "[train] done -> $OUT"
