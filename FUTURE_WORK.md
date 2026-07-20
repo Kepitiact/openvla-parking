@@ -72,6 +72,34 @@ car on BOTH sides), and **moving vehicles** inside the lot.
 
 ---
 
+## 1b. A* planner: fix the LATERAL alignment (fold into the v2 collection)
+
+**Measured** over all 1308 training episodes (end-of-episode ego pose vs target slot, in the
+slot frame; slot 5.5 x 3.0 m, car ~4.5 x 1.8 => slack ~0.5 m along, ~0.6 m across):
+
+| axis | result |
+|---|---|
+| heading | **perfect** — p95 1.4 deg, max 8 deg |
+| longitudinal (depth) | **perfect** — p99 0.28 m, ZERO episodes exceed the 0.5 m slack |
+| **lateral (sideways)** | **the failure** — p90 0.90 m; **24.5%** exceed 0.6 m slack, **9.9%** clearly outside the slot |
+
+So the planner nails depth and angle and fails sideways — ~10% of episodes end up straddling
+a neighbouring bay. Mechanically sensible: depth is "back up until deep enough", lateral is
+set by where the reverse begins and the steering arc. **It is a targeted fix (approach /
+turn-in geometry, or lateral tracking in the controller), not a planner rewrite.**
+
+**Why not regenerate now:** v1 trains on this data already, and the v1 thesis (reasoning is
+load-bearing) does not depend on perfect GT. Regenerating costs the full pipeline (collect ->
+~18 h extract -> ~8 h teacher). **Fold the lateral fix into the v2 collection (§1)** so we
+regenerate once, not twice.
+
+**CRITICAL for reading v1's eval — the model cannot beat its teacher.** The GT itself scores
+only **68.9%** "parked well" (<0.5 m, <10 deg). A model at ~65% is nearly MATCHING its
+demonstrations, i.e. a success. Always report model quality **relative to GT quality**, never
+against perfection, or a good model reads as a bad one.
+
+---
+
 ## 2. Counterfactual training (deferred, and possibly obsolete)
 
 `reasoning_data_gen/counterfactual.py` generates stop-injection pairs and a
