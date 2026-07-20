@@ -57,10 +57,13 @@ REASON_GATE=${REASON_GATE:-1}
 
 case "$STAGE" in
   align)    MODEL=${MODEL:-$REPO/checkpoints/DriveVLA-Qwen2.5-3B-init}
-            OUT=$REPO/checkpoints/DriveVLA-3B-align
+            OUT=${OUT:-$REPO/checkpoints/DriveVLA-3B-align}
             DEFAULT_EPOCHS=1 ;;
   finetune) MODEL=${MODEL:-$REPO/checkpoints/DriveVLA-3B-align}
-            OUT=$REPO/checkpoints/DriveVLA-3B-reason
+            # OVERRIDABLE and it matters: the gate A/B runs finetune twice. Without
+            # distinct OUT dirs both arms write to DriveVLA-3B-reason and the second
+            # silently clobbers the first -- destroying the comparison.
+            OUT=${OUT:-$REPO/checkpoints/DriveVLA-3B-reason}
             DEFAULT_EPOCHS=3 ;;
   *) echo "stage must be align|finetune" >&2; exit 1 ;;
 esac
