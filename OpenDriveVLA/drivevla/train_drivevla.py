@@ -317,9 +317,17 @@ def main():
     accelerator = None
     if use_accelerate:
         from accelerate import Accelerator
+        from accelerate.utils import DistributedDataParallelKwargs
+        # find_unused_parameters: a frame with NO track detections leaves
+        # track_query_embeddings None, so llava_arch skips mm_projector_track entirely
+        # (llava_arch.py:338) and its params get no gradient that step. DDP's default
+        # all-reduce asserts every trainable param participated -> "Expected to have
+        # finished reduction in the prior iteration". Empty-track frames are real (UniAD
+        # legitimately detects nothing sometimes), so tolerate the unused branch.
         accelerator = Accelerator(
             gradient_accumulation_steps=args.grad_accum,
             mixed_precision="bf16" if args.bf16 else "fp16",
+            kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)],
         )
         is_main = accelerator.is_main_process
         device = accelerator.device
