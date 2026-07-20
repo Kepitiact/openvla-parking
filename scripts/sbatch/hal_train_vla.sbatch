@@ -94,6 +94,7 @@ srun singularity exec --nv \
       --num-epochs "$EPOCHS" \
       --bf16 --distributed \
       --lora-rank 64 --lora-alpha 128 \
-      --grad-accum 8 --batch-size 1 --num-workers 4 --save-every 1
+      --grad-accum 8 --batch-size 1 --num-workers 4 --save-every 1 \
+      --save-steps "${SAVE_STEPS:-2000}"
 
 echo "[train] done -> $OUT"
