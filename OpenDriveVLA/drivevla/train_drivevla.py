@@ -641,7 +641,11 @@ def main():
                 break
 
             if (step + 1) % 50 == 0 and is_main:
-                avg = epoch_loss / n_batches
+                # max(1, …) like the line above: batches missing `uniad_pth` `continue`
+                # BEFORE n_batches is incremented, so if the first 50 were all skipped,
+                # step would reach 49 with n_batches == 0 and this would ZeroDivisionError
+                # — killing the run at the first log line rather than training.
+                avg = epoch_loss / max(1, n_batches)
                 lr_now = scheduler.get_last_lr()[0]
                 log.info(f"  epoch {epoch} step {step+1}/{len(loader)} "
                          f"loss={avg:.4f} lr={lr_now:.2e} t={time.time()-t0:.0f}s")
