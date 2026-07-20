@@ -25,7 +25,11 @@
 # shorter run (align ~1.7h, finetune ~6h) once it schedules. --nproc_per_node below tracks
 # whatever is allocated, so this is the only line to change for a different GPU count.
 #SBATCH --gres=gpu:8
-#SBATCH --time=48:00:00
+# Request only what the run needs. Slurm BACKFILLS short jobs into gaps ahead of big
+# reservations -- a 48h request (the old value) fits in no gap, so an align job needing ~2h
+# sat behind a ~3-week estimate. 12h covers the longest real run (finetune, 3 epochs ~6h)
+# with margin. Override per stage at submit: --time=04:00:00 for align backfills even better.
+#SBATCH --time=12:00:00
 #SBATCH --output=/workspaces/s0002438/openvla-parking/checkpoints/train_vla_%j.log
 
 set -euo pipefail
