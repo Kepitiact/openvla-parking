@@ -420,6 +420,17 @@ class LlavaMetaForCausalLM(ABC):
         # keep the padding mask
         pad = (attention_mask_2d == 0)[:, None, None, :]                    # (B,1,1,L)
         mask.masked_fill_(pad, min_val)
+
+        # UNMASK FULLY-MASKED ROWS, or the loss is NaN. With LEFT padding (this collator
+        # left-pads, and llava_arch left-pads the spliced multimodal sequence), a query at a
+        # padded position can causally attend only to keys <= its index -- all of which are
+        # padding, hence all masked. softmax over an all -inf row returns NaN, which
+        # propagates to the loss on the very first step. HuggingFace guards its own masks
+        # with AttentionMaskConverter._unmask_unattended; a custom 4-D mask must do the same.
+        # These rows are padding queries whose outputs are discarded (labels are -100 there),
+        # so unmasking them is safe and changes no real attention.
+        fully_masked = (mask <= min_val).all(dim=-1, keepdim=True)          # (B,1,L,1)
+        mask = mask.masked_fill(fully_masked, 0.0)
         return mask
 
     def prepare_inputs_labels_for_multimodal_uniad_vlm(self, input_ids, position_ids, attention_mask, past_key_values, labels, images, modalities=["image"], image_sizes=None, uniad_data=None, uniad_pth=None, qa_instance_ind=None):
