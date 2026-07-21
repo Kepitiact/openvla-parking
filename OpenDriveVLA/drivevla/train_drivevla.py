@@ -473,6 +473,32 @@ def main():
             if param.requires_grad:
                 param.data = param.data.float()
 
+    # NAN_HOOKS=1: find the FIRST module whose output goes non-finite. The gate makes the
+    # logits NaN while the mask itself is provably clean (no inf/nan/fully-masked rows), so
+    # value-level reasoning has run out — locate the exact op instead.
+    if os.environ.get("NAN_HOOKS") == "1":
+        _nan_found = {"hit": False}
+
+        def _mk_hook(name):
+            def _hook(mod, inp, out):
+                if _nan_found["hit"]:
+                    return
+                t = out[0] if isinstance(out, (tuple, list)) and len(out) else out
+                if not torch.is_tensor(t) or t.dtype not in (torch.float16, torch.bfloat16, torch.float32):
+                    return
+                if not torch.isfinite(t).all():
+                    ins = [f"{i}:{'finite' if (torch.is_tensor(x) and torch.isfinite(x).all()) else 'NONFINITE'}"
+                           for i, x in enumerate(inp) if torch.is_tensor(x)]
+                    _nan_found["hit"] = True
+                    log.error(f"  [nan-hook] FIRST non-finite output at module '{name}' "
+                              f"({type(mod).__name__}) | inputs: {ins}")
+            return _hook
+
+        for _n, _m in model.named_modules():
+            if len(list(_m.children())) == 0 or "self_attn" in _n or "mlp" in _n:
+                _m.register_forward_hook(_mk_hook(_n))
+        log.info("  [nan-hook] forward hooks registered")
+
     # Enable gradient checkpointing to save activation memory
     # use_reentrant=False is REQUIRED here, not a preference. The default (reentrant)
     # checkpointing is incompatible with DDP's find_unused_parameters=True — which we need
