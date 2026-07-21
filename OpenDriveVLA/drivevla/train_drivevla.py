@@ -474,7 +474,12 @@ def main():
                 param.data = param.data.float()
 
     # Enable gradient checkpointing to save activation memory
-    model.gradient_checkpointing_enable()
+    # use_reentrant=False is REQUIRED here, not a preference. The default (reentrant)
+    # checkpointing is incompatible with DDP's find_unused_parameters=True — which we need
+    # for empty-track frames — and the pair fails with "Expected to mark a variable ready
+    # only once ... lora_B ... marked as ready twice" as soon as LoRA params sit inside a
+    # checkpointed layer. align survived only because it runs without LoRA; finetune does not.
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
     trainable, total = count_trainable(model)
     lora_desc = (f"LoRA rank={args.lora_rank} on {','.join(target_modules)}"
