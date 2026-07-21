@@ -412,16 +412,23 @@ class LlavaMetaForCausalLM(ABC):
             if idx.numel():
                 is_traj[b, int(idx[0, 0]):] = True                          # <traj_start> .. end
 
-        causal = torch.full((L, L), min_val, device=device, dtype=dtype).triu(diagonal=1)
-        mask = causal[None, None].expand(B, 1, L, L).clone()                # (B,1,L,L)
+        # MUST be a 0/1 mask (1 = may attend, 0 = blocked), NOT an additive one.
+        # transformers' _prepare_4d_causal_attention_mask treats ANY 4-D mask as 0/1 and
+        # inverts it:  inverted = 1.0 - mask;  mask = inverted.masked_fill(inverted.bool(), min)
+        # Handing it an additive mask (0 / finfo.min) therefore mapped our *attend* entries
+        # (0 -> 1.0 -> nonzero) to BLOCKED, so every position ended up masked: causality
+        # destroyed, attention uniform over the whole sequence, activations diverge, and the
+        # logits are NaN by layer 0. Build 0/1 and let transformers do the conversion.
+        mask = torch.ones((L, L), device=device, dtype=dtype).tril()        # causal: key <= query
+        mask = mask[None, None].expand(B, 1, L, L).clone()                  # (B,1,L,L)
 
         # query = trajectory position, key = perception position  -> forbidden
         blocked = is_traj[:, :, None] & perception[:, None, :]              # (B,L,L)
-        mask.masked_fill_(blocked[:, None, :, :], min_val)
+        mask.masked_fill_(blocked[:, None, :, :], 0.0)
 
         # keep the padding mask
         pad = (attention_mask_2d == 0)[:, None, None, :]                    # (B,1,1,L)
-        mask.masked_fill_(pad, min_val)
+        mask.masked_fill_(pad, 0.0)
 
         # UNMASK FULLY-MASKED ROWS, or the loss is NaN. With LEFT padding (this collator
         # left-pads, and llava_arch left-pads the spliced multimodal sequence), a query at a
@@ -431,8 +438,12 @@ class LlavaMetaForCausalLM(ABC):
         # with AttentionMaskConverter._unmask_unattended; a custom 4-D mask must do the same.
         # These rows are padding queries whose outputs are discarded (labels are -100 there),
         # so unmasking them is safe and changes no real attention.
-        fully_masked = (mask <= min_val).all(dim=-1, keepdim=True)          # (B,1,L,1)
-        mask = mask.masked_fill(fully_masked, 0.0)
+        # No query may end up with nothing to attend to (a left-padded query can otherwise
+        # have every key blocked). Let such a row attend to itself; its output is discarded
+        # (labels are -100 there), so this changes no real attention.
+        fully_masked = (mask.sum(dim=-1, keepdim=True) == 0)                # (B,1,L,1)
+        eye = torch.eye(L, device=device, dtype=torch.bool)[None, None]     # (1,1,L,L)
+        mask = torch.where(fully_masked & eye, torch.ones_like(mask), mask)
 
         # One-time diagnostic (REASON_GATE_DEBUG=1). The gate makes the loss NaN and three
         # value-based theories have already failed, so report the FACTS once instead of
@@ -442,10 +453,10 @@ class LlavaMetaForCausalLM(ABC):
         global _GATE_DEBUG_DONE
         if os.environ.get("REASON_GATE_DEBUG") == "1" and not _GATE_DEBUG_DONE:
             _GATE_DEBUG_DONE = True
-            print(f"[gate-debug] dtype={dtype} min_val={min_val:.4e} "
-                  f"mask.min={mask.min().item():.4e} mask.max={mask.max().item():.4e} "
-                  f"has_inf={bool(torch.isinf(mask).any())} has_nan={bool(torch.isnan(mask).any())} "
-                  f"fully_masked_rows={int(fully_masked.sum())} "
+            frac_allowed = float(mask.sum().item()) / float(B * L * L)
+            print(f"[gate-debug] 0/1 mask dtype={dtype} min={mask.min().item():.1f} "
+                  f"max={mask.max().item():.1f} frac_allowed={frac_allowed:.3f} "
+                  f"(causal-only would be ~0.5) empty_rows_fixed={int(fully_masked.sum())} "
                   f"perception_tokens={int(perception.sum())} traj_tokens={int(is_traj.sum())} "
                   f"L={L} streams={sorted(streams)}", flush=True)
         return mask
