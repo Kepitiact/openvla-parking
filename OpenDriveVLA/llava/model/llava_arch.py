@@ -21,6 +21,8 @@ import re
 import time
 import torch
 import torch.nn as nn
+
+_GATE_DEBUG_DONE = False   # one-time REASON_GATE_DEBUG print (see build_reason_gate_mask)
 import torch.nn.functional as F
 from typing import Dict
 
@@ -431,6 +433,21 @@ class LlavaMetaForCausalLM(ABC):
         # so unmasking them is safe and changes no real attention.
         fully_masked = (mask <= min_val).all(dim=-1, keepdim=True)          # (B,1,L,1)
         mask = mask.masked_fill(fully_masked, 0.0)
+
+        # One-time diagnostic (REASON_GATE_DEBUG=1). The gate makes the loss NaN and three
+        # value-based theories have already failed, so report the FACTS once instead of
+        # guessing again: dtype actually used, the mask's extremes, any inf/nan it contains,
+        # how many rows were fully masked, and whether the marker streams were found at all
+        # (all-zero perception would mean the gate is masking the wrong thing).
+        global _GATE_DEBUG_DONE
+        if os.environ.get("REASON_GATE_DEBUG") == "1" and not _GATE_DEBUG_DONE:
+            _GATE_DEBUG_DONE = True
+            print(f"[gate-debug] dtype={dtype} min_val={min_val:.4e} "
+                  f"mask.min={mask.min().item():.4e} mask.max={mask.max().item():.4e} "
+                  f"has_inf={bool(torch.isinf(mask).any())} has_nan={bool(torch.isnan(mask).any())} "
+                  f"fully_masked_rows={int(fully_masked.sum())} "
+                  f"perception_tokens={int(perception.sum())} traj_tokens={int(is_traj.sum())} "
+                  f"L={L} streams={sorted(streams)}", flush=True)
         return mask
 
     def prepare_inputs_labels_for_multimodal_uniad_vlm(self, input_ids, position_ids, attention_mask, past_key_values, labels, images, modalities=["image"], image_sizes=None, uniad_data=None, uniad_pth=None, qa_instance_ind=None):

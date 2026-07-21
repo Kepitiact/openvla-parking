@@ -615,10 +615,15 @@ def main():
                     # would desync DDP's all-reduce) — just surface it.
                     if not torch.isfinite(outputs.loss) and not nan_seen:
                         nan_seen = True
-                        tok = batch.get("sample_id") or batch.get("id") or "<unknown>"
-                        log.error(f"  NON-FINITE loss at step {step+1} "
-                                  f"(loss={outputs.loss.item()}) sample={tok}; "
-                                  f"uniad_pth={batch.get('uniad_pth')}")
+                        # Localize it: are the LOGITS already NaN (forward broke) or only
+                        # the loss (label/reduction problem)? And are the inputs clean?
+                        lg = getattr(outputs, "logits", None)
+                        log.error(
+                            f"  NON-FINITE loss at step {step+1} loss={outputs.loss.item()} | "
+                            f"logits_nan={bool(torch.isnan(lg).any()) if lg is not None else '?'} "
+                            f"logits_inf={bool(torch.isinf(lg).any()) if lg is not None else '?'} | "
+                            f"labels_valid={int((labels != -100).sum())} "
+                            f"seq_len={input_ids.shape[-1]}")
                     accelerator.backward(outputs.loss)
                     if accelerator.sync_gradients:
                         accelerator.clip_grad_norm_(
