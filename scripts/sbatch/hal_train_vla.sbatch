@@ -59,7 +59,10 @@ case "$STAGE" in
   align)    MODEL=${MODEL:-$REPO/checkpoints/DriveVLA-Qwen2.5-3B-init}
             OUT=${OUT:-$REPO/checkpoints/DriveVLA-3B-align}
             DEFAULT_EPOCHS=1 ;;
-  finetune) MODEL=${MODEL:-$REPO/checkpoints/DriveVLA-3B-align}
+            # NB: align writes the full model into an epoch_NNN SUBDIR (save_pretrained),
+            # so the parent dir has no config.json and load_pretrained_model dies with
+            # "does not appear to have a file named config.json". Point at the LATEST epoch.
+  finetune) MODEL=${MODEL:-$(ls -d "$REPO"/checkpoints/DriveVLA-3B-align/epoch_* 2>/dev/null | sort | tail -1)}
             # OVERRIDABLE and it matters: the gate A/B runs finetune twice. Without
             # distinct OUT dirs both arms write to DriveVLA-3B-reason and the second
             # silently clobbers the first -- destroying the comparison.
@@ -68,6 +71,15 @@ case "$STAGE" in
   *) echo "stage must be align|finetune" >&2; exit 1 ;;
 esac
 EPOCHS=${EPOCHS:-$DEFAULT_EPOCHS}
+
+# Fail loudly and early: an empty/!dir MODEL otherwise surfaces 10 minutes later as an
+# opaque HuggingFace "does not appear to have a file named config.json".
+if [ -z "$MODEL" ] || [ ! -f "$MODEL/config.json" ]; then
+  echo "ERROR: MODEL='$MODEL' is not a loadable model dir (no config.json)." >&2
+  echo "       align writes the model to <out>/epoch_NNN — pass that subdir, e.g." >&2
+  echo "       MODEL=$REPO/checkpoints/DriveVLA-3B-align/epoch_001" >&2
+  exit 1
+fi
 
 echo "[train] stage=$STAGE  model=$MODEL  ->  $OUT"
 echo "[train] uniad=$UNIAD_CKPT (FROZEN)"
