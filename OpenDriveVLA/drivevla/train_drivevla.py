@@ -582,6 +582,8 @@ def main():
 
         epoch_loss = 0.0
         n_batches = 0
+        last_loss = float("nan")   # current-batch loss, logged beside the running average
+        nan_seen = False           # report only the FIRST non-finite loss, not every one
         optimizer.zero_grad()
         t0 = time.time()
 
@@ -606,6 +608,17 @@ def main():
                         attention_mask=attention_mask,
                         uniad_pth=uniad_pth,
                     )
+                    # Report the FIRST non-finite loss with the sample that produced it.
+                    # epoch_loss is a running sum, so one NaN batch makes every later
+                    # "avg loss" read nan and hides whether training is otherwise healthy.
+                    # Do NOT change control flow here (skipping a batch on one rank only
+                    # would desync DDP's all-reduce) — just surface it.
+                    if not torch.isfinite(outputs.loss) and not nan_seen:
+                        nan_seen = True
+                        tok = batch.get("sample_id") or batch.get("id") or "<unknown>"
+                        log.error(f"  NON-FINITE loss at step {step+1} "
+                                  f"(loss={outputs.loss.item()}) sample={tok}; "
+                                  f"uniad_pth={batch.get('uniad_pth')}")
                     accelerator.backward(outputs.loss)
                     if accelerator.sync_gradients:
                         accelerator.clip_grad_norm_(
@@ -615,6 +628,7 @@ def main():
                         optimizer.zero_grad()
                         global_step += 1
                 epoch_loss += outputs.loss.item()
+                last_loss = outputs.loss.item()
             else:
                 with torch.cuda.amp.autocast(dtype=dtype):
                     outputs = model(
@@ -652,8 +666,11 @@ def main():
                 # — killing the run at the first log line rather than training.
                 avg = epoch_loss / max(1, n_batches)
                 lr_now = scheduler.get_last_lr()[0]
+                # `cur` is the CURRENT batch: if avg is nan but cur is finite, a single bad
+                # batch poisoned the running sum and training is otherwise progressing.
                 log.info(f"  epoch {epoch} step {step+1}/{len(loader)} "
-                         f"loss={avg:.4f} lr={lr_now:.2e} t={time.time()-t0:.0f}s")
+                         f"loss={avg:.4f} cur={last_loss:.4f} "
+                         f"lr={lr_now:.2e} t={time.time()-t0:.0f}s")
 
             # Mid-epoch resumable checkpoint (B2): survive Slurm preemption without
             # losing a whole epoch of work.
