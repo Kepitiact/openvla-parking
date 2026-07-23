@@ -66,9 +66,15 @@ fi
 
 # 2. inference on val -> planning_conversations_val.json (answer=traj span, reasoning kept)
 echo "[eval] 2/3 inference on val (limit=$LIMIT)"
+# --data selects the frames: with use_uniad_pth the dataset runs on this conversation list
+# and reads each frame's features from its stamped uniad_pth (val -> uniad_features_val).
+# --uniad-config carla_parking.py (NOT the default base_track_map.py, which points ann_file
+# at a nuScenes val pkl that does not exist here -- the first-run crash).
 run torchrun --nproc_per_node="${SLURM_GPUS_ON_NODE:-4}" --master_port=29503 \
   drivevla/inference_drivevla.py \
     --model-path "$MERGED" --use-uniad-pth --bf16 \
+    --uniad-config projects/configs/stage1_track_map/carla_parking.py \
+    --data "$PROC/carla_conversations_val.json" \
     --output "$OUT_DIR/planning_conversations_val.json" \
     --limit "$LIMIT"
 
