@@ -317,6 +317,7 @@ def main() -> None:
     predicted_traj = prediction_entry.get("trajectory", [])
     prompt_text = prediction_entry.get("question")
     answer_text = prediction_entry.get("answer")
+    reasoning_text = prediction_entry.get("reasoning")
 
     output_dir = args.output_dir / info["token"]
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -347,6 +348,7 @@ def main() -> None:
         "ego_gt_future_xy_right_forward_m": [[round(float(x), 3), round(float(y), 3)] for x, y in future_traj.tolist()],
         "predicted_future_xy_right_forward_m": [[round(float(x), 3), round(float(y), 3)] for x, y in predicted_traj],
         "prompt_from_predictions": prompt_text,
+        "reasoning_from_predictions": reasoning_text,
         "answer_from_predictions": answer_text,
         "agent_count": int(len(info["gt_boxes"])),
         "nearest_agents": build_agent_summary(info, args.top_agents),
@@ -369,6 +371,10 @@ def main() -> None:
         print("\n===== Prompt for selected sample =====")
         print(prompt_text)
         print("===== End prompt =====\n")
+
+    if reasoning_text:
+        print(f"\n>>> MODEL REASONING: {reasoning_text}")
+        print(f">>> MODEL TRAJECTORY: {answer_text}\n")
 
     print(json.dumps({
         "sample_token": info["token"],
