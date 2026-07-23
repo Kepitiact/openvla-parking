@@ -121,10 +121,14 @@ def load_prediction_map(predictions_path: Path | None) -> dict[str, dict]:
             first_answer = str(answer_value)
 
         question = record.get("question")
+        reasoning = record.get("reasoning")           # the reasoning-VLA's trace
+        if isinstance(reasoning, list):
+            reasoning = reasoning[0] if reasoning else ""
         predictions[token] = {
             "trajectory": parse_trajectory_text(first_answer) if first_answer else [],
             "question": question,
             "answer": first_answer,
+            "reasoning": reasoning or "",
         }
     return predictions
 

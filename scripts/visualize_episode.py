@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import textwrap
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -116,7 +117,8 @@ def make_filmstrip(frames, token_to_info, pred_map, data_root, max_frames, out_p
             ax_p.plot(hist[:, 0], hist[:, 1], "o-", color="tab:blue", ms=3, lw=1.5)
         if len(fut):
             ax_p.plot(fut[:, 0], fut[:, 1], "o-", color="tab:green", ms=3, lw=1.5)
-        pred = pred_map.get(f["token"], {}).get("trajectory", [])
+        entry = pred_map.get(f["token"], {})
+        pred = entry.get("trajectory", [])
         if pred:
             p = np.asarray(pred, dtype=float)
             ax_p.plot(p[:, 0], p[:, 1], "o--", color="tab:red", ms=3, lw=1.5)
@@ -125,8 +127,15 @@ def make_filmstrip(frames, token_to_info, pred_map, data_root, max_frames, out_p
         ax_p.grid(True, alpha=0.2)
         ax_p.tick_params(labelsize=6)
 
+        # The model's REASONING for this frame, wrapped under the trajectory plot -- the
+        # whole point of a reasoning-VLA is to read this beside the motion it produced.
+        reasoning = entry.get("reasoning", "")
+        if reasoning:
+            wrapped = textwrap.fill(reasoning, width=34)
+            ax_p.set_xlabel(wrapped, fontsize=6, wrap=True, color="tab:red")
+
     axes[0, 0].set_ylabel("front cam", fontsize=9)
-    axes[1, 0].set_ylabel("blue=hist  green=GT  red=pred", fontsize=8)
+    axes[1, 0].set_ylabel("blue=hist  green=GT  red=pred\n(red text = model reasoning)", fontsize=7)
     fig.suptitle(f"Filmstrip: {sel[0]['token'].rsplit('_', 1)[0]}  ({n} of {len(frames)} frames)", fontsize=11)
     fig.tight_layout()
     fig.savefig(out_path, dpi=130, bbox_inches="tight")
