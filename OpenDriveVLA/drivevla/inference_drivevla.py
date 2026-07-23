@@ -218,6 +218,12 @@ def inference_planning_oriented_vlm(args):
 
     test_dataset = LLaVANuScenesDataset(tokenizer, data_args, uniad_cfg.data.test, llava_test_mode=True, use_uniad_pth=args.use_uniad_pth)
     # test_dataset = LLaVANuScenesDataset(tokenizer, data_args, uniad_cfg.data.test_llava_with_track_gt, llava_test_mode=True, use_uniad_pth=args.use_uniad_pth)
+
+    # --limit: run only the first N frames. Lets the whole eval path (merge -> inference ->
+    # score) be verified on ztest in minutes before committing to the full val set.
+    if getattr(args, "limit", 0):
+        test_dataset = torch.utils.data.Subset(test_dataset, range(min(args.limit, len(test_dataset))))
+        print(f"--limit: running on {len(test_dataset)} frames")
     
     # Initialize DDP sampler
     if args.local_rank != -1 and args.world_size > 1:
@@ -350,6 +356,7 @@ def main():
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--use-uniad-pth", action="store_true", help="Use uniad pth for inference")
+    parser.add_argument("--limit", type=int, default=0, help="Run only the first N frames (0 = all); for a fast eval-path smoke")
     parser.add_argument("--attn-implementation", type=str, default="sdpa",
                       choices=["sdpa", "flash_attention_2", "eager"],
                       help="Attention implementation to use")
