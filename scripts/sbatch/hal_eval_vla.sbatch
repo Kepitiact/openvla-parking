@@ -78,11 +78,13 @@ run torchrun --nproc_per_node="${SLURM_GPUS_ON_NODE:-4}" --master_port=29503 \
     --output "$OUT_DIR/planning_conversations_val.json" \
     --limit "$LIMIT"
 
-# 3. score both halves: trajectory (final-pose) and reasoning (faithfulness)
+# 3. score both halves: trajectory (final-pose) and reasoning (faithfulness).
+# ABSOLUTE paths: --pwd is $REPO/OpenDriveVLA (for merge/inference), but the scorers live at
+# $REPO/scripts, not $REPO/OpenDriveVLA/scripts.
 echo "[eval] 3/3 scoring"
-run python scripts/score_trajectory.py \
+run python "$REPO/scripts/score_trajectory.py" \
       --student "$OUT_DIR/planning_conversations_val.json" --traces "$TRACES"
-run python scripts/score_reasoning_faithfulness.py \
+run python "$REPO/scripts/score_reasoning_faithfulness.py" \
       --student "$OUT_DIR/planning_conversations_val.json" --traces "$TRACES"
 
 echo "[eval] done -> $OUT_DIR"

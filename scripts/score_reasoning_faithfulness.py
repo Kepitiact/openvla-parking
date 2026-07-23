@@ -43,7 +43,8 @@ def _load_student(path: str) -> dict:
         text = f.read().strip()
         rows = json.loads(text) if text.startswith("[") else [json.loads(l) for l in text.splitlines()]
     for r in rows:
-        tok = r.get("id") or r.get("sample_id")
+        # inference ids carry a "_trajectory" suffix; traces are keyed by the bare token.
+        tok = (r.get("id") or r.get("sample_id") or "").removesuffix("_trajectory")
         reasoning = r.get("reasoning")
         if isinstance(reasoning, list):
             reasoning = reasoning[0] if reasoning else ""

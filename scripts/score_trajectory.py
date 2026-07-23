@@ -40,7 +40,8 @@ def _load_student(path: str):
     rows = json.loads(text) if text.startswith("[") else [json.loads(l) for l in text.splitlines()]
     out = {}
     for r in rows:
-        tok = r.get("id") or r.get("sample_id")
+        # inference ids carry a "_trajectory" suffix; traces are keyed by the bare token.
+        tok = (r.get("id") or r.get("sample_id") or "").removesuffix("_trajectory")
         ans = r.get("answer")
         if isinstance(ans, list):
             ans = ans[0] if ans else ""
