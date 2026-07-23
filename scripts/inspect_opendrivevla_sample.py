@@ -5,6 +5,7 @@ import json
 import math
 import pickle
 import re
+import textwrap
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -254,18 +255,31 @@ def save_camera_grid(info: dict, data_root: Path, output_path: Path) -> None:
     plt.close(figure)
 
 
+_OBSTACLE_COLOR = {"car": "tab:blue", "truck": "tab:orange", "bus": "tab:orange",
+                   "pedestrian": "tab:red", "bicycle": "tab:purple", "motorcycle": "tab:purple"}
+
+
 def save_trajectory_plot(
     info: dict,
     history_traj: np.ndarray,
     future_traj: np.ndarray,
     predicted_traj: list[tuple[float, float]],
     output_path: Path,
+    reasoning_text: str = "",
 ) -> None:
-    figure, axis = plt.subplots(figsize=(8, 8))
+    figure, axis = plt.subplots(figsize=(8, 8.6))
 
+    # Obstacles (GT boxes), labelled by CLASS -- these are cars/trucks/pedestrians, not
+    # "agents". Convert lidar frame (x=forward, y=left) -> model frame (right=-y, forward=x)
+    # so they line up with the trajectory, which is drawn in model frame.
     if len(info["gt_boxes"]):
         boxes = np.asarray(info["gt_boxes"], dtype=float)
-        axis.scatter(boxes[:, 0], boxes[:, 1], s=24, alpha=0.35, color="gray", label="Agents")
+        names = np.asarray(info["gt_names"])
+        obs_right, obs_fwd = -boxes[:, 1], boxes[:, 0]
+        for cls in sorted(set(names.tolist())):
+            m = names == cls
+            axis.scatter(obs_right[m], obs_fwd[m], s=45, alpha=0.5, marker="s",
+                         color=_OBSTACLE_COLOR.get(cls, "gray"), label=f"{cls} (obstacle)")
 
     axis.scatter([0.0], [0.0], s=100, marker="*", color="black", label="Current ego")
 
@@ -286,8 +300,14 @@ def save_trajectory_plot(
     axis.set_title(f"Trajectory view for sample {info['token']}")
     axis.set_aspect("equal", adjustable="box")
     axis.grid(True, alpha=0.2)
-    axis.legend(loc="best")
-    figure.tight_layout()
+    axis.legend(loc="best", fontsize=8)
+
+    # The model's reasoning, in the figure itself, under the plot.
+    if reasoning_text:
+        figure.subplots_adjust(bottom=0.16)
+        figure.text(0.5, 0.03, "reasoning: " + textwrap.fill(reasoning_text, 80),
+                    ha="center", va="bottom", fontsize=9, color="tab:red", wrap=True)
+
     figure.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(figure)
 
@@ -328,7 +348,8 @@ def main() -> None:
     prompt_path = output_dir / "prompt.txt"
 
     save_camera_grid(info, args.data_root, camera_grid_path)
-    save_trajectory_plot(info, history_traj, future_traj, predicted_traj, trajectory_plot_path)
+    save_trajectory_plot(info, history_traj, future_traj, predicted_traj, trajectory_plot_path,
+                         reasoning_text=reasoning_text or "")
 
     summary = {
         "sample_token": info["token"],
